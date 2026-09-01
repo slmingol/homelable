@@ -1,0 +1,12 @@
+services:
+  backend:
+    image: ghcr.io/slmingol/homelable-backend:debug
+    build: !reset null
+
+  frontend:
+    image: ghcr.io/slmingol/homelable-frontend:debug
+    build: !reset null
+
+  mcp:
+    image: ghcr.io/slmingol/homelable-mcp:debug
+    build: !reset null
