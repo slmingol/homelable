@@ -1,0 +1,68 @@
+name: Debug Build
+
+on:
+  push:
+    branches: ['debug']
+  pull_request:
+    branches: ['debug']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        include:
+          - image: ghcr.io/slmingol/homelable-backend
+            context: .
+            dockerfile: Dockerfile.backend
+            build_args: ""
+          - image: ghcr.io/slmingol/homelable-frontend
+            context: .
+            dockerfile: Dockerfile.frontend
+            build_args: ""
+          - image: ghcr.io/slmingol/homelable-mcp
+            context: ./mcp
+            dockerfile: Dockerfile.mcp
+            build_args: ""
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image }}
+          tags: |
+            type=raw,value=debug
+            type=sha,prefix=debug-,format=short
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: ${{ matrix.build_args }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
