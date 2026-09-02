@@ -31,10 +31,9 @@ jobs:
           if git merge upstream/main --ff-only; then
             echo "synced=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::warning::Fork main has diverged from upstream — skipping sync. Rebase feature branches onto upstream/main to resolve."
-            echo "synced=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Fork main has diverged from upstream and cannot be fast-forwarded. Rebase or merge upstream/main into your local main, then push to resolve."
+            exit 1
           fi
 
       - name: Push
-        if: steps.merge.outputs.synced == 'true'
         run: git push origin main
