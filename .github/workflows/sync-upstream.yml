@@ -24,10 +24,17 @@ jobs:
           git fetch upstream main
 
       - name: Merge upstream into main
+        id: merge
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git merge upstream/main --ff-only
+          if git merge upstream/main --ff-only; then
+            echo "synced=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Fork main has diverged from upstream — skipping sync. Rebase feature branches onto upstream/main to resolve."
+            echo "synced=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Push
+        if: steps.merge.outputs.synced == 'true'
         run: git push origin main
