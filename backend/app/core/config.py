@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     oidc_transaction_expire_seconds: int = Field(default=600, ge=60, le=3600)
 
     @model_validator(mode="after")
+    def _parse_integration_urls(self) -> "Settings":
+        for label, url in (("OPNSENSE_URL", self.opnsense_url), ("PFSENSE_URL", self.pfsense_url)):
+            if url:
+                parsed = urlsplit(url)
+                if not parsed.scheme or not parsed.hostname:
+                    logger.warning("%s=%r looks malformed (expected scheme://host:port)", label, url)
+        return self
+
+    @model_validator(mode="after")
     def validate_auth_settings(self) -> "Settings":
         h = self.auth_password_hash
         if h and not h.startswith("$2"):
@@ -201,20 +210,18 @@ class Settings(BaseSettings):
     mqtt_response_timeout: int = 300
 
     # OPNsense import. Credentials are secrets → env/.env ONLY, never persisted.
+    # OPNSENSE_URL=http://opnsense-rtr1.bub.lan:80
     opnsense_api_key: str = ""
     opnsense_api_secret: str = ""
-    opnsense_host: str = ""
-    opnsense_port: int = 80
-    opnsense_scheme: str = "http"
+    opnsense_url: str = ""
     opnsense_verify_tls: bool = False
     opnsense_sync_enabled: bool = False
     opnsense_sync_interval: int = 3600
 
     # pfSense import. Credentials are secrets → env/.env ONLY, never persisted.
+    # PFSENSE_URL=https://pfsense-rtr1.example.org:10443
     pfsense_api_key: str = ""
-    pfsense_host: str = ""
-    pfsense_port: int = 443
-    pfsense_scheme: str = "https"
+    pfsense_url: str = ""
     pfsense_verify_tls: bool = False
     pfsense_sync_enabled: bool = False
     pfsense_sync_interval: int = 3600

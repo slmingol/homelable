@@ -12,24 +12,18 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-def _base_url(host: str, port: int, scheme: str = "http") -> str:
-    return f"{scheme}://{host}:{port}"
-
-
 def _auth_header(api_key: str, api_secret: str) -> dict[str, str]:
     token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
 
 
 async def test_opnsense_connection(
-    host: str,
-    port: int,
+    base_url: str,
     api_key: str,
     api_secret: str,
-    scheme: str = "http",
     verify_tls: bool = False,
 ) -> tuple[bool, str]:
-    base = _base_url(host, port, scheme)
+    base = base_url.rstrip("/")
     headers = _auth_header(api_key, api_secret)
     try:
         async with httpx.AsyncClient(verify=verify_tls, timeout=10.0) as client:
@@ -37,26 +31,24 @@ async def test_opnsense_connection(
             if r.status_code == 401:
                 return False, "Authentication failed: invalid API key or secret"
             if r.status_code != 200:
-                return False, f"Unexpected response {r.status_code} from {host}"
+                return False, f"Unexpected response {r.status_code} from {base_url}"
             data = r.json()
             rows = data.get("rows", [])
             return True, f"Connected — {len(rows)} ARP entr{'y' if len(rows) == 1 else 'ies'} found"
     except httpx.ConnectError as exc:
-        return False, f"Cannot reach {scheme}://{host}:{port} — {exc}"
+        return False, f"Cannot reach {base_url} — {exc}"
     except Exception as exc:
         return False, str(exc)
 
 
 async def fetch_opnsense_inventory(
-    host: str,
-    port: int,
+    base_url: str,
     api_key: str,
     api_secret: str,
-    scheme: str = "http",
     verify_tls: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch ARP table + DHCP leases and return normalized device dicts."""
-    base = _base_url(host, port, scheme)
+    base = base_url.rstrip("/")
     headers = _auth_header(api_key, api_secret)
 
     async with httpx.AsyncClient(verify=verify_tls, timeout=15.0) as client:
@@ -134,7 +126,7 @@ async def fetch_opnsense_inventory(
         })
         seen_macs.add(mac)
 
-    logger.info("OPNsense: %d devices fetched from %s", len(results), host)
+    logger.info("OPNsense: %d devices fetched from %s", len(results), base_url)
     return results
 
 
