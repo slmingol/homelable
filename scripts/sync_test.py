@@ -26,16 +26,14 @@ async def test_unifi():
 
 
 async def test_opnsense():
-    host   = os.environ.get("OPNSENSE_HOST", "")
-    port   = int(os.environ.get("OPNSENSE_PORT", "80"))
+    url    = os.environ.get("OPNSENSE_URL", "")
     key    = os.environ.get("OPNSENSE_API_KEY", "")
     secret = os.environ.get("OPNSENSE_API_SECRET", "")
-    if not host:
-        print("  OPNsense: OPNSENSE_HOST not set — skipped")
+    if not url:
+        print("  OPNsense: OPNSENSE_URL not set — skipped")
         return
-    scheme = os.environ.get("OPNSENSE_SCHEME", "http")
-    base   = f"{scheme}://{host}:{port}"
-    token  = base64.b64encode(f"{key}:{secret}".encode()).decode()
+    base  = url.rstrip("/")
+    token = base64.b64encode(f"{key}:{secret}".encode()).decode()
     async with httpx.AsyncClient(verify=False, timeout=5) as c:
         try:
             r = await c.get(
@@ -52,14 +50,12 @@ async def test_opnsense():
 
 
 async def test_pfsense():
-    host   = os.environ.get("PFSENSE_HOST", "")
-    port   = os.environ.get("PFSENSE_PORT", "443")
-    scheme = os.environ.get("PFSENSE_SCHEME", "https")
-    key    = os.environ.get("PFSENSE_API_KEY", "")
-    if not host:
-        print("  pfSense : PFSENSE_HOST not set — skipped")
+    url = os.environ.get("PFSENSE_URL", "")
+    key = os.environ.get("PFSENSE_API_KEY", "")
+    if not url:
+        print("  pfSense : PFSENSE_URL not set — skipped")
         return
-    base = f"{scheme}://{host}:{port}"
+    base = url.rstrip("/")
     async with httpx.AsyncClient(verify=False, timeout=10) as c:
         for path in ["/api/v1/diagnostics/arp", "/api/v2/diagnostics/arp-table"]:
             try:

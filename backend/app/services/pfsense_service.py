@@ -17,13 +17,11 @@ def _auth_headers(api_key: str) -> dict[str, str]:
 
 
 async def test_pfsense_connection(
-    host: str,
-    port: int,
+    base_url: str,
     api_key: str,
-    scheme: str = "https",
     verify_tls: bool = False,
 ) -> tuple[bool, str]:
-    base = f"{scheme}://{host}:{port}"
+    base = base_url.rstrip("/")
     headers = _auth_headers(api_key)
     try:
         async with httpx.AsyncClient(verify=verify_tls, timeout=10.0) as client:
@@ -40,22 +38,20 @@ async def test_pfsense_connection(
                         return True, f"Connected — {len(entries)} ARP entr{'y' if len(entries) == 1 else 'ies'} found"
                 except httpx.HTTPStatusError:
                     continue
-            return False, f"No supported pfSense API found at {host}:{port}"
+            return False, f"No supported pfSense API found at {base_url}"
     except httpx.ConnectError as exc:
-        return False, f"Cannot reach {host}:{port} — {exc}"
+        return False, f"Cannot reach {base_url} — {exc}"
     except Exception as exc:
         return False, str(exc)
 
 
 async def fetch_pfsense_inventory(
-    host: str,
-    port: int,
+    base_url: str,
     api_key: str,
-    scheme: str = "https",
     verify_tls: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch ARP table + DHCP leases and return normalized device dicts."""
-    base = f"{scheme}://{host}:{port}"
+    base = base_url.rstrip("/")
     headers = _auth_headers(api_key)
 
     async with httpx.AsyncClient(verify=verify_tls, timeout=15.0) as client:
@@ -132,7 +128,7 @@ async def fetch_pfsense_inventory(
         })
         seen_macs.add(mac)
 
-    logger.info("pfSense: %d devices fetched from %s", len(results), host)
+    logger.info("pfSense: %d devices fetched from %s", len(results), base_url)
     return results
 
 

@@ -655,8 +655,7 @@ export const unifiApi = {
 }
 
 export interface OpnsenseConfigData {
-  host: string
-  port: number
+  url: string
   verify_tls: boolean
   sync_enabled: boolean
   sync_interval: number
@@ -679,8 +678,7 @@ export const opnsenseApi = {
 }
 
 export interface PfsenseConfigData {
-  host: string
-  port: number
+  url: string
   verify_tls: boolean
   sync_enabled: boolean
   sync_interval: number
