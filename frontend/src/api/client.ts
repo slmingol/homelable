@@ -465,3 +465,45 @@ export const zwaveApi = {
     api.post<ZwaveConfigData>('/zwave/config', data),
   syncNow: () => api.post<ScanRunResult>('/zwave/sync-now'),
 }
+
+export interface UnifiConfigData {
+  host: string
+  port: number
+  site: string
+  verify_tls: boolean
+  sync_enabled: boolean
+  sync_interval: number
+  credentials_configured: boolean
+}
+
+export interface UnifiImportResult {
+  device_count: number
+  pending_created: number
+  pending_updated: number
+}
+
+export const unifiApi = {
+  testConnection: (data: {
+    host: string
+    port: number
+    site?: string
+    username?: string
+    password?: string
+    verify_tls?: boolean
+  }) =>
+    api.post<{ connected: boolean; message: string }>('/unifi/test-connection', data),
+
+  importToPending: (data: {
+    host: string
+    port: number
+    site?: string
+    username?: string
+    password?: string
+    verify_tls?: boolean
+  }) => api.post<UnifiImportResult>('/unifi/import-pending', data),
+
+  getConfig: () => api.get<UnifiConfigData>('/unifi/config'),
+  saveConfig: (data: { sync_enabled: boolean; sync_interval: number }) =>
+    api.post<UnifiConfigData>('/unifi/config', data),
+  syncNow: () => api.post<UnifiImportResult>('/unifi/sync-now'),
+}

@@ -206,6 +206,18 @@ class Settings(BaseSettings):
     lldp_discovery_enabled: bool = False
     lldp_discovery_interval: int = 3600
 
+    # UniFi Network Controller import.
+    # Credentials are secrets → env/.env ONLY, never persisted.
+    unifi_username: str = ""
+    unifi_password: str = ""
+    # Non-secret connection + auto-sync config (persisted via save_overrides).
+    unifi_host: str = ""
+    unifi_port: int = 8443
+    unifi_site: str = "default"
+    unifi_verify_tls: bool = False
+    unifi_sync_enabled: bool = False
+    unifi_sync_interval: int = 3600
+
     def _override_path(self) -> Path:
         return Path(self.sqlite_path).parent / "scan_config.json"
 
@@ -261,6 +273,18 @@ class Settings(BaseSettings):
                 self.lldp_discovery_enabled = bool(data["lldp_discovery_enabled"])
             if "lldp_discovery_interval" in data:
                 self.lldp_discovery_interval = int(data["lldp_discovery_interval"])
+            if "unifi_sync_enabled" in data:
+                self.unifi_sync_enabled = bool(data["unifi_sync_enabled"])
+            if "unifi_sync_interval" in data:
+                self.unifi_sync_interval = int(data["unifi_sync_interval"])
+            if "unifi_host" in data:
+                self.unifi_host = str(data["unifi_host"])
+            if "unifi_port" in data:
+                self.unifi_port = int(data["unifi_port"])
+            if "unifi_site" in data:
+                self.unifi_site = str(data["unifi_site"])
+            if "unifi_verify_tls" in data:
+                self.unifi_verify_tls = bool(data["unifi_verify_tls"])
         except Exception:
             pass
 
@@ -290,6 +314,14 @@ class Settings(BaseSettings):
             "snmp_poll_interval": self.snmp_poll_interval,
             "lldp_discovery_enabled": self.lldp_discovery_enabled,
             "lldp_discovery_interval": self.lldp_discovery_interval,
+            # UniFi: non-secret connection config + auto-sync activation persisted.
+            # Credentials (username/password) are env-only and never written here.
+            "unifi_sync_enabled": self.unifi_sync_enabled,
+            "unifi_sync_interval": self.unifi_sync_interval,
+            "unifi_host": self.unifi_host,
+            "unifi_port": self.unifi_port,
+            "unifi_site": self.unifi_site,
+            "unifi_verify_tls": self.unifi_verify_tls,
         }))
 
 
