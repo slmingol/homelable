@@ -12,6 +12,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def _base_url(host: str, port: int, scheme: str = "http") -> str:
+    return f"{scheme}://{host}:{port}"
+
+
 def _auth_header(api_key: str, api_secret: str) -> dict[str, str]:
     token = base64.b64encode(f"{api_key}:{api_secret}".encode()).decode()
     return {"Authorization": f"Basic {token}"}
@@ -22,9 +26,10 @@ async def test_opnsense_connection(
     port: int,
     api_key: str,
     api_secret: str,
+    scheme: str = "http",
     verify_tls: bool = False,
 ) -> tuple[bool, str]:
-    base = f"https://{host}:{port}"
+    base = _base_url(host, port, scheme)
     headers = _auth_header(api_key, api_secret)
     try:
         async with httpx.AsyncClient(verify=verify_tls, timeout=10.0) as client:
@@ -37,7 +42,7 @@ async def test_opnsense_connection(
             rows = data.get("rows", [])
             return True, f"Connected — {len(rows)} ARP entr{'y' if len(rows) == 1 else 'ies'} found"
     except httpx.ConnectError as exc:
-        return False, f"Cannot reach {host}:{port} — {exc}"
+        return False, f"Cannot reach {scheme}://{host}:{port} — {exc}"
     except Exception as exc:
         return False, str(exc)
 
@@ -47,10 +52,11 @@ async def fetch_opnsense_inventory(
     port: int,
     api_key: str,
     api_secret: str,
+    scheme: str = "http",
     verify_tls: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch ARP table + DHCP leases and return normalized device dicts."""
-    base = f"https://{host}:{port}"
+    base = _base_url(host, port, scheme)
     headers = _auth_header(api_key, api_secret)
 
     async with httpx.AsyncClient(verify=verify_tls, timeout=15.0) as client:

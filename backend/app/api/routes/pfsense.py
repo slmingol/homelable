@@ -41,6 +41,7 @@ async def test_connection_endpoint(
         host=settings.pfsense_host,
         port=settings.pfsense_port,
         api_key=settings.pfsense_api_key,
+        scheme=settings.pfsense_scheme,
         verify_tls=settings.pfsense_verify_tls,
     )
     return PfsenseTestConnectionResponse(connected=connected, message=message)
@@ -61,6 +62,7 @@ async def sync_pfsense_now(
             host=settings.pfsense_host,
             port=settings.pfsense_port,
             api_key=settings.pfsense_api_key,
+            scheme=settings.pfsense_scheme,
             verify_tls=settings.pfsense_verify_tls,
         )
     except Exception as exc:
