@@ -25,6 +25,7 @@ from app.api.routes import (
     stats,
     status,
     unifi,
+    unifi as unifi_routes,
     zigbee,
     zwave,
 )
@@ -105,6 +106,7 @@ app.include_router(media.router, prefix="/api/v1/media", tags=["media"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
 app.include_router(docsview.router, prefix="/api/v1/docsview", tags=["docsview"])
 app.include_router(snmp_routes.router, prefix="/api/v1/snmp", tags=["snmp"])
+app.include_router(unifi_routes.router, prefix="/api/v1/unifi", tags=["unifi"])
 
 
 @app.get("/api/v1/health")
