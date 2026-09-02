@@ -89,15 +89,15 @@ async def sync_unifi_now(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ) -> UnifiImportResponse:
-    if not (settings.unifi_host and settings.unifi_username and settings.unifi_password):
+    if not (settings.unifi_effective_host and settings.unifi_username and settings.unifi_password):
         raise HTTPException(
             status_code=400,
             detail="Cannot sync: no UniFi host/credentials configured on the server.",
         )
     try:
         devices = await fetch_unifi_inventory(
-            host=settings.unifi_host,
-            port=settings.unifi_port,
+            host=settings.unifi_effective_host,
+            port=settings.unifi_effective_port,
             site=settings.unifi_site,
             username=settings.unifi_username,
             password=settings.unifi_password,
@@ -112,8 +112,8 @@ async def sync_unifi_now(
 @router.get("/config", response_model=UnifiConfig)
 async def get_unifi_config(_: str = Depends(get_current_user)) -> UnifiConfig:
     return UnifiConfig(
-        host=settings.unifi_host,
-        port=settings.unifi_port,
+        host=settings.unifi_effective_host,
+        port=settings.unifi_effective_port,
         site=settings.unifi_site,
         verify_tls=settings.unifi_verify_tls,
         sync_enabled=settings.unifi_sync_enabled,
@@ -128,7 +128,7 @@ async def save_unifi_config(
     _: str = Depends(get_current_user),
 ) -> UnifiConfig:
     if payload.sync_enabled and not (
-        settings.unifi_host and settings.unifi_username and settings.unifi_password
+        settings.unifi_effective_host and settings.unifi_username and settings.unifi_password
     ):
         raise HTTPException(
             status_code=400,
@@ -219,8 +219,8 @@ async def _background_unifi_sync(run_id: str) -> None:
     async with AsyncSessionLocal() as db:
         try:
             devices = await fetch_unifi_inventory(
-                host=settings.unifi_host,
-                port=settings.unifi_port,
+                host=settings.unifi_effective_host,
+                port=settings.unifi_effective_port,
                 site=settings.unifi_site,
                 username=settings.unifi_username,
                 password=settings.unifi_password,

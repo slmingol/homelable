@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -208,15 +208,34 @@ class Settings(BaseSettings):
 
     # UniFi Network Controller import.
     # Credentials are secrets → env/.env ONLY, never persisted.
-    unifi_username: str = ""
-    unifi_password: str = ""
+    # Accepts UNIFI_USER or UNIFI_USERNAME; UNIFI_PASS or UNIFI_PASSWORD.
+    unifi_username: str = Field("", alias="unifi_user", validation_alias=AliasChoices("unifi_username", "unifi_user"))
+    unifi_password: str = Field("", alias="unifi_pass", validation_alias=AliasChoices("unifi_password", "unifi_pass"))
     # Non-secret connection + auto-sync config (persisted via save_overrides).
+    # Accepts UNIFI_URL (full URL) or UNIFI_HOST (bare host/IP).
+    unifi_url: str = ""
     unifi_host: str = ""
     unifi_port: int = 8443
     unifi_site: str = "default"
     unifi_verify_tls: bool = False
     unifi_sync_enabled: bool = False
     unifi_sync_interval: int = 3600
+
+    @property
+    def unifi_effective_host(self) -> str:
+        """Return bare host extracted from UNIFI_URL, or UNIFI_HOST."""
+        if self.unifi_url:
+            parsed = urlsplit(self.unifi_url)
+            return parsed.hostname or self.unifi_url
+        return self.unifi_host
+
+    @property
+    def unifi_effective_port(self) -> int:
+        """Return port from UNIFI_URL if set, else UNIFI_PORT."""
+        if self.unifi_url:
+            parsed = urlsplit(self.unifi_url)
+            return parsed.port or self.unifi_port
+        return self.unifi_port
 
     def _override_path(self) -> Path:
         return Path(self.sqlite_path).parent / "scan_config.json"

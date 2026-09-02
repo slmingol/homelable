@@ -419,7 +419,7 @@ async def _run_unifi_sync() -> None:
     """Fetch the UniFi inventory and upsert it into pending (auto-sync)."""
     if not settings.unifi_sync_enabled:
         return
-    if not (settings.unifi_host and settings.unifi_username and settings.unifi_password):
+    if not (settings.unifi_effective_host and settings.unifi_username and settings.unifi_password):
         logger.warning("UniFi auto-sync enabled but host/credentials not configured — skipping")
         return
     from app.api.routes.unifi import _background_unifi_sync
@@ -429,7 +429,7 @@ async def _run_unifi_sync() -> None:
         run = ScanRun(
             status="running",
             kind="unifi",
-            ranges=[f"{settings.unifi_host}:{settings.unifi_port}"],
+            ranges=[f"{settings.unifi_effective_host}:{settings.unifi_effective_port}"],
         )
         db.add(run)
         await db.commit()
