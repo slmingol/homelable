@@ -27,45 +27,52 @@ async def test_unifi():
 
 async def test_opnsense():
     host   = os.environ.get("OPNSENSE_HOST", "")
+    port   = int(os.environ.get("OPNSENSE_PORT", "80"))
     key    = os.environ.get("OPNSENSE_API_KEY", "")
     secret = os.environ.get("OPNSENSE_API_SECRET", "")
     if not host:
         print("  OPNsense: OPNSENSE_HOST not set — skipped")
         return
-    token = base64.b64encode(f"{key}:{secret}".encode()).decode()
+    scheme = os.environ.get("OPNSENSE_SCHEME", "http")
+    base   = f"{scheme}://{host}:{port}"
+    token  = base64.b64encode(f"{key}:{secret}".encode()).decode()
     async with httpx.AsyncClient(verify=False, timeout=5) as c:
         try:
             r = await c.get(
-                f"https://{host}/api/diagnostics/interface/getArp",
+                f"{base}/api/diagnostics/interface/getArp",
                 headers={"Authorization": f"Basic {token}"},
             )
             if r.status_code == 200:
                 rows = r.json().get("rows", [])
                 print(f"  OPNsense: connected — {len(rows)} ARP entries")
             else:
-                print(f"  OPNsense: HTTP {r.status_code}")
+                print(f"  OPNsense: HTTP {r.status_code}: {r.text[:80]}")
         except Exception as e:
-            print(f"  OPNsense: {e}")
+            print(f"  OPNsense: {repr(e)}")
 
 
 async def test_pfsense():
-    host = os.environ.get("PFSENSE_HOST", "")
-    key  = os.environ.get("PFSENSE_API_KEY", "")
+    host   = os.environ.get("PFSENSE_HOST", "")
+    port   = os.environ.get("PFSENSE_PORT", "443")
+    scheme = os.environ.get("PFSENSE_SCHEME", "https")
+    key    = os.environ.get("PFSENSE_API_KEY", "")
     if not host:
         print("  pfSense : PFSENSE_HOST not set — skipped")
         return
-    async with httpx.AsyncClient(verify=False, timeout=5) as c:
+    base = f"{scheme}://{host}:{port}"
+    async with httpx.AsyncClient(verify=False, timeout=10) as c:
         for path in ["/api/v1/diagnostics/arp", "/api/v2/diagnostics/arp-table"]:
             try:
-                r = await c.get(f"https://{host}{path}", headers={"Authorization": key})
+                r = await c.get(f"{base}{path}", headers={"Authorization": key})
                 if r.status_code == 200:
                     data = r.json()
                     rows = data.get("data", []) if isinstance(data.get("data"), list) else []
                     print(f"  pfSense : connected via {path} — {len(rows)} ARP entries")
                     return
-            except Exception:
-                continue
-    print("  pfSense : no supported API responded")
+                print(f"  pfSense : {path} → HTTP {r.status_code}: {r.text[:120]}")
+            except Exception as e:
+                print(f"  pfSense : {path} → {repr(e)}")
+    print("  pfSense : no supported API path succeeded")
 
 
 async def main():

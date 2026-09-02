@@ -204,7 +204,8 @@ class Settings(BaseSettings):
     opnsense_api_key: str = ""
     opnsense_api_secret: str = ""
     opnsense_host: str = ""
-    opnsense_port: int = 443
+    opnsense_port: int = 80
+    opnsense_scheme: str = "http"
     opnsense_verify_tls: bool = False
     opnsense_sync_enabled: bool = False
     opnsense_sync_interval: int = 3600
@@ -213,6 +214,7 @@ class Settings(BaseSettings):
     pfsense_api_key: str = ""
     pfsense_host: str = ""
     pfsense_port: int = 443
+    pfsense_scheme: str = "https"
     pfsense_verify_tls: bool = False
     pfsense_sync_enabled: bool = False
     pfsense_sync_interval: int = 3600
