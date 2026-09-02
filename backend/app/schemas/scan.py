@@ -45,6 +45,11 @@ class InventoryDeviceResponse(BaseModel):
     show_hardware: bool = False
     check_method: str | None = None
     check_target: str | None = None
+    snmp_enabled: bool = False
+    snmp_community: str = "public"
+    snmp_version: str = "2c"
+    snmp_port: int = 161
+    snmp_oids: list[Any] = []
     # Live reachability, distinct from `status` (the pending/approved/hidden
     # lifecycle).
     status_live: str = "unknown"
@@ -186,6 +191,11 @@ class InventoryDeviceUpdate(BaseModel):
     rack_col_span: int | None = None
     rack_color: str | None = None
     rack_ports: list[Any] | None = None
+    snmp_enabled: bool | None = None
+    snmp_community: str | None = None
+    snmp_version: str | None = None
+    snmp_port: int | None = None
+    snmp_oids: list[Any] | None = None
 
     @field_validator("rack_u_height")
     @classmethod
