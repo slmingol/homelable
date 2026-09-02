@@ -415,6 +415,30 @@ def _match_neighbor(
     return None
 
 
+async def _run_unifi_sync() -> None:
+    """Fetch the UniFi inventory and upsert it into pending (auto-sync)."""
+    if not settings.unifi_sync_enabled:
+        return
+    if not (settings.unifi_host and settings.unifi_username and settings.unifi_password):
+        logger.warning("UniFi auto-sync enabled but host/credentials not configured — skipping")
+        return
+    from app.api.routes.unifi import _background_unifi_sync
+    from app.db.models import ScanRun
+
+    async with AsyncSessionLocal() as db:
+        run = ScanRun(
+            status="running",
+            kind="unifi",
+            ranges=[f"{settings.unifi_host}:{settings.unifi_port}"],
+        )
+        db.add(run)
+        await db.commit()
+        await db.refresh(run)
+        run_id = run.id
+
+    await _background_unifi_sync(run_id)
+
+
 async def _run_zigbee_sync() -> None:
     await _run_mesh_sync("zigbee")
 
@@ -440,6 +464,17 @@ def _add_lldp_discovery_job() -> None:
         "interval",
         seconds=settings.lldp_discovery_interval,
         id="lldp_discovery",
+        max_instances=1,
+        coalesce=True,
+    )
+
+
+def _add_unifi_sync_job() -> None:
+    scheduler.add_job(
+        _run_unifi_sync,
+        "interval",
+        seconds=settings.unifi_sync_interval,
+        id="unifi_sync",
         max_instances=1,
         coalesce=True,
     )
@@ -509,6 +544,8 @@ def start_scheduler() -> None:
         _add_snmp_poll_job()
     if settings.lldp_discovery_enabled:
         _add_lldp_discovery_job()
+    if settings.unifi_sync_enabled:
+        _add_unifi_sync_job()
     if settings.service_check_enabled:
         _add_service_check_job()
     if settings.proxmox_sync_enabled:
@@ -630,6 +667,29 @@ def set_proxmox_sync_enabled(enabled: bool) -> None:
     elif not enabled and job:
         scheduler.remove_job("proxmox_sync")
         logger.info("Proxmox auto-sync disabled")
+
+
+def reschedule_unifi_sync(interval_seconds: int) -> None:
+    if interval_seconds < 300:
+        raise ValueError(f"interval_seconds must be >= 300, got {interval_seconds}")
+    if not scheduler.running:
+        logger.warning("Scheduler not running, skipping reschedule")
+        return
+    if scheduler.get_job("unifi_sync"):
+        scheduler.reschedule_job("unifi_sync", trigger="interval", seconds=interval_seconds)
+        logger.info("UniFi auto-sync rescheduled to every %ds", interval_seconds)
+
+
+def set_unifi_sync_enabled(enabled: bool) -> None:
+    if not scheduler.running:
+        return
+    job = scheduler.get_job("unifi_sync")
+    if enabled and not job:
+        _add_unifi_sync_job()
+        logger.info("UniFi auto-sync enabled — every %ds", settings.unifi_sync_interval)
+    elif not enabled and job:
+        scheduler.remove_job("unifi_sync")
+        logger.info("UniFi auto-sync disabled")
 
 
 def reschedule_zigbee_sync(interval_seconds: int) -> None:
