@@ -20,6 +20,8 @@ from app.api.routes import (
     proxmox,
     racks,
     scan,
+    opnsense as opnsense_routes,
+    pfsense as pfsense_routes,
     snmp as snmp_routes,
     stats,
     status,
@@ -99,6 +101,8 @@ app.include_router(media.router, prefix="/api/v1/media", tags=["media"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
 app.include_router(snmp_routes.router, prefix="/api/v1/snmp", tags=["snmp"])
 app.include_router(unifi_routes.router, prefix="/api/v1/unifi", tags=["unifi"])
+app.include_router(opnsense_routes.router, prefix="/api/v1/opnsense", tags=["opnsense"])
+app.include_router(pfsense_routes.router, prefix="/api/v1/pfsense", tags=["pfsense"])
 
 
 @app.get("/api/v1/health")
