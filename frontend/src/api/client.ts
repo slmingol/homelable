@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { useAuthStore } from '@/stores/authStore'
 import type { AuthMode, AuthUser } from '@/stores/authStore'
-import type { InventoryEntry } from '@/types'
+import type { InventoryEntry, LldpNeighbor, SnmpMetric } from '@/types'
 
 export const api = axios.create({
   baseURL: '/api/v1',
@@ -401,6 +401,13 @@ export const zigbeeApi = {
   saveConfig: (data: { sync_enabled: boolean; sync_interval: number }) =>
     api.post<ZigbeeConfigData>('/zigbee/config', data),
   syncNow: () => api.post<ScanRunResult>('/zigbee/sync-now'),
+}
+
+export const snmpApi = {
+  metrics: (deviceId: string) => api.get<SnmpMetric[]>(`/snmp/${deviceId}/metrics`),
+  poll: (deviceId: string) => api.post<SnmpMetric[]>(`/snmp/${deviceId}/poll`),
+  neighbors: (deviceId: string) => api.get<LldpNeighbor[]>(`/snmp/${deviceId}/neighbors`),
+  discover: (deviceId: string) => api.post<{ neighbors: LldpNeighbor[]; edges_created: number }>(`/snmp/${deviceId}/discover`),
 }
 
 export const zwaveApi = {

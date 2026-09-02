@@ -16,6 +16,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import {
+  Activity,
   Check,
   Copy,
   Factory,
@@ -24,6 +25,7 @@ import {
   History,
   Layers,
   Loader2,
+  Minus,
   Network,
   Pencil,
   Plus,
@@ -43,7 +45,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSepa
 import { PropertyList } from '@/components/common/PropertyList'
 import { ServiceModal } from './ServiceModal'
 import { DeepScanModal } from './DeepScanModal'
-import { scanApi } from '@/api/client'
+import { scanApi, snmpApi } from '@/api/client'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { deviceFactsToNodeData } from '@/utils/deviceFacts'
@@ -54,7 +56,7 @@ import { DEVICE_TYPE_GROUPS } from '@/utils/nodeTypeGroups'
 import { formatRelative, formatTimestamp } from '@/utils/timeFormat'
 import { countPorts } from '@/utils/portSpec'
 import { serviceToForm, type ServiceFormData, type ServiceSubmitData } from '@/utils/serviceForm'
-import { NODE_TYPE_LABELS, type CheckMethod, type InventoryEntry, type NodeProperty, type NodeType, type ServiceInfo } from '@/types'
+import { NODE_TYPE_LABELS, type CheckMethod, type InventoryEntry, type LldpNeighbor, type NodeProperty, type NodeType, type ServiceInfo, type SnmpMetric } from '@/types'
 import modalStyles from './modal-interactive.module.css'
 
 // Home is `@/types` now — re-exported because most call sites import it here.
@@ -84,7 +86,7 @@ const CATEGORY_COLORS: Record<string, string> = {
   iot: '#e3b341',
 }
 
-const CHECK_METHODS: CheckMethod[] = ['ping', 'http', 'https', 'tcp', 'ssh', 'prometheus', 'health', 'none']
+const CHECK_METHODS: CheckMethod[] = ['ping', 'http', 'https', 'tcp', 'ssh', 'prometheus', 'health', 'snmp', 'none']
 
 const CHECK_METHOD_LABELS: Record<CheckMethod, string> = {
   none: 'None',
@@ -95,6 +97,7 @@ const CHECK_METHOD_LABELS: Record<CheckMethod, string> = {
   ssh: 'SSH',
   prometheus: 'Prometheus',
   health: 'Health',
+  snmp: 'SNMP',
 }
 
 /** Live reachability — not the pending/approved/hidden lifecycle. */
@@ -230,6 +233,10 @@ interface EditForm {
   show_hardware: boolean
   check_method: string
   check_target: string
+  snmp_enabled: boolean
+  snmp_community: string
+  snmp_version: string
+  snmp_port: string
 }
 
 function toForm(d: InventoryEntry): EditForm {
@@ -254,6 +261,10 @@ function toForm(d: InventoryEntry): EditForm {
     show_hardware: d.show_hardware ?? false,
     check_method: d.check_method ?? '',
     check_target: d.check_target ?? '',
+    snmp_enabled: d.snmp_enabled ?? false,
+    snmp_community: d.snmp_community ?? 'public',
+    snmp_version: d.snmp_version ?? '2c',
+    snmp_port: d.snmp_port != null ? String(d.snmp_port) : '161',
   }
 }
 
@@ -267,6 +278,11 @@ export function InventoryDeviceModal({ device, onClose, onApprove, onHide, onIgn
   const [services, setServices] = useState<ServiceInfo[]>(device?.services ?? [])
   const [svcModal, setSvcModal] = useState<{ index: number | null; form?: ServiceFormData } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [snmpOids, setSnmpOids] = useState<Array<{ oid: string; label: string }>>(device?.snmp_oids ?? [])
+  const [snmpMetrics, setSnmpMetrics] = useState<SnmpMetric[]>([])
+  const [snmpPolling, setSnmpPolling] = useState(false)
+  const [lldpNeighbors, setLldpNeighbors] = useState<LldpNeighbor[]>([])
+  const [lldpDiscovering, setLldpDiscovering] = useState(false)
   // The id of the deep rescan this modal started, while it is still running.
   const [rescanRunId, setRescanRunId] = useState<string | null>(null)
   const [rescanStarting, setRescanStarting] = useState(false)
@@ -299,10 +315,18 @@ export function InventoryDeviceModal({ device, onClose, onApprove, onHide, onIgn
     setForm(toForm(d))
     setProperties(d.properties ?? [])
     setServices(d.services ?? [])
+    setSnmpOids(d.snmp_oids ?? [])
+    setSnmpMetrics([])
+    setLldpNeighbors([])
     setEditing(false)
     setSvcModal(null)
     setRescanRunId(null)
     setDeepScanOpen(false)
+  }, [deviceId])
+
+  useEffect(() => {
+    if (!deviceId) return
+    snmpApi.metrics(deviceId).then((r) => setSnmpMetrics(r.data)).catch(() => {})
   }, [deviceId])
 
   // Wait on a running deep rescan. A full 65535-port scan takes minutes, so the
@@ -401,6 +425,38 @@ export function InventoryDeviceModal({ device, onClose, onApprove, onHide, onIgn
     }
   }
 
+  const handleSnmpPoll = async () => {
+    if (!device) return
+    setSnmpPolling(true)
+    try {
+      const r = await snmpApi.poll(device.id)
+      setSnmpMetrics(r.data)
+      toast.success('SNMP polled')
+    } catch {
+      toast.error('SNMP poll failed')
+    } finally {
+      setSnmpPolling(false)
+    }
+  }
+
+  const handleLldpDiscover = async () => {
+    if (!device) return
+    setLldpDiscovering(true)
+    try {
+      const r = await snmpApi.discover(device.id)
+      setLldpNeighbors(r.data.neighbors)
+      if (r.data.edges_created > 0) {
+        toast.success(`Topology discovered — ${r.data.edges_created} edge${r.data.edges_created !== 1 ? 's' : ''} created`)
+      } else {
+        toast.success(`Found ${r.data.neighbors.length} neighbor${r.data.neighbors.length !== 1 ? 's' : ''}, no new edges`)
+      }
+    } catch {
+      toast.error('Topology discovery failed')
+    } finally {
+      setLldpDiscovering(false)
+    }
+  }
+
   const handleSubmitService = (data: ServiceSubmitData) => {
     const svc: ServiceInfo = {
       ...(data.port != null ? { port: data.port } : {}),
@@ -440,6 +496,11 @@ export function InventoryDeviceModal({ device, onClose, onApprove, onHide, onIgn
         show_hardware: form.show_hardware,
         check_method: nullable(form.check_method) as CheckMethod | null,
         check_target: nullable(form.check_target),
+        snmp_enabled: form.snmp_enabled,
+        snmp_community: form.snmp_community || 'public',
+        snmp_version: form.snmp_version || '2c',
+        snmp_port: numeric(form.snmp_port) ?? 161,
+        snmp_oids: snmpOids,
         properties,
         services,
       })
@@ -614,6 +675,88 @@ export function InventoryDeviceModal({ device, onClose, onApprove, onHide, onIgn
                     placeholder="Anything worth remembering about this device."
                     className="bg-[#21262d] border-[#30363d] text-sm"
                   />
+                </Section>
+
+                <Section title="SNMP Polling" icon={Activity}>
+                  <div className="flex flex-col gap-3">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={form.snmp_enabled}
+                        onChange={(e) => set('snmp_enabled', e.target.checked)}
+                        className="accent-[#00d4ff]"
+                      />
+                      <span className="text-xs text-muted-foreground">Enable SNMP polling</span>
+                    </label>
+                    {form.snmp_enabled && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Community">
+                          <Input
+                            value={form.snmp_community}
+                            onChange={(e) => set('snmp_community', e.target.value)}
+                            placeholder="public"
+                            className={`${INPUT} font-mono`}
+                          />
+                        </Field>
+                        <Field label="Version">
+                          <select
+                            value={form.snmp_version}
+                            onChange={(e) => set('snmp_version', e.target.value)}
+                            className="bg-[#21262d] border border-[#30363d] text-sm h-8 rounded px-2 outline-none focus:border-[#00d4ff]/50"
+                          >
+                            <option value="1">v1</option>
+                            <option value="2c">v2c</option>
+                          </select>
+                        </Field>
+                        <Field label="Port" className="col-span-2">
+                          <Input
+                            value={form.snmp_port}
+                            onChange={(e) => set('snmp_port', e.target.value)}
+                            placeholder="161"
+                            className={`${INPUT} font-mono`}
+                          />
+                        </Field>
+                        <div className="col-span-2 flex flex-col gap-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-muted-foreground">OIDs to poll</span>
+                            <button
+                              type="button"
+                              onClick={() => setSnmpOids((prev) => [...prev, { oid: '', label: '' }])}
+                              className="flex items-center gap-1 text-[10px] text-[#00d4ff] hover:text-[#00d4ff]/80 transition-colors cursor-pointer"
+                            >
+                              <Plus size={10} /> Add OID
+                            </button>
+                          </div>
+                          {snmpOids.length === 0 && (
+                            <p className="text-[10px] text-muted-foreground/60 italic">Using default OIDs (sysDescr, sysUpTime, sysName, ifNumber)</p>
+                          )}
+                          {snmpOids.map((entry, i) => (
+                            <div key={i} className="flex items-center gap-1.5">
+                              <input
+                                value={entry.oid}
+                                onChange={(e) => setSnmpOids((prev) => prev.map((o, j) => j === i ? { ...o, oid: e.target.value } : o))}
+                                placeholder="1.3.6.1.2.1.1.1.0"
+                                className="flex-1 bg-[#21262d] border border-[#30363d] text-xs h-7 rounded px-2 font-mono outline-none focus:border-[#00d4ff]/50"
+                              />
+                              <input
+                                value={entry.label}
+                                onChange={(e) => setSnmpOids((prev) => prev.map((o, j) => j === i ? { ...o, label: e.target.value } : o))}
+                                placeholder="label"
+                                className="w-24 bg-[#21262d] border border-[#30363d] text-xs h-7 rounded px-2 outline-none focus:border-[#00d4ff]/50"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setSnmpOids((prev) => prev.filter((_, j) => j !== i))}
+                                className="text-muted-foreground hover:text-[#f85149] transition-colors cursor-pointer"
+                              >
+                                <Minus size={11} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </Section>
               </div>
 
@@ -821,6 +964,74 @@ export function InventoryDeviceModal({ device, onClose, onApprove, onHide, onIgn
                     </div>
                   ) : (
                     <Empty>No properties.</Empty>
+                  )}
+                </Section>
+
+                <Section
+                  title="SNMP"
+                  icon={Activity}
+                  action={
+                    device.snmp_enabled ? (
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={handleLldpDiscover}
+                          disabled={lldpDiscovering}
+                          className="flex items-center gap-1 text-[10px] text-[#a855f7] hover:text-[#a855f7]/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {lldpDiscovering ? <Loader2 size={10} className="animate-spin" /> : <Network size={10} />}
+                          Discover topology
+                        </button>
+                        <button
+                          onClick={handleSnmpPoll}
+                          disabled={snmpPolling}
+                          className="flex items-center gap-1 text-[10px] text-[#00d4ff] hover:text-[#00d4ff]/80 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {snmpPolling ? <Loader2 size={10} className="animate-spin" /> : <Activity size={10} />}
+                          Poll now
+                        </button>
+                      </div>
+                    ) : undefined
+                  }
+                >
+                  {!device.snmp_enabled ? (
+                    <Empty>SNMP not enabled — turn on in Edit.</Empty>
+                  ) : (
+                    <div className="flex flex-col gap-3">
+                      {snmpMetrics.length === 0 ? (
+                        <Empty>No data yet — click Poll now.</Empty>
+                      ) : (
+                        <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+                          {snmpMetrics.map((m) => (
+                            <div key={m.oid} className="flex items-start gap-2 px-2.5 py-1.5 rounded-md bg-[#21262d] border border-[#30363d] text-xs">
+                              <div className="flex flex-col min-w-0 flex-1">
+                                <span className="font-mono text-[#00d4ff] truncate text-[10px]">{m.label ?? m.oid}</span>
+                                <span className="text-foreground/80 break-all">{m.value ?? '—'}</span>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground shrink-0">{m.value_type}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {lldpNeighbors.length > 0 && (
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">LLDP Neighbors</span>
+                          <div className="flex flex-col gap-1 max-h-48 overflow-y-auto">
+                            {lldpNeighbors.map((n, i) => (
+                              <div key={i} className="flex items-start gap-2 px-2.5 py-1.5 rounded-md bg-[#21262d] border border-[#30363d] text-xs">
+                                <div className="flex flex-col min-w-0 flex-1 gap-0.5">
+                                  <span className="text-foreground font-medium truncate">{n.sys_name ?? '—'}</span>
+                                  <span className="font-mono text-[#a855f7] text-[10px] truncate">{n.chassis_id ?? '—'}</span>
+                                </div>
+                                <div className="flex flex-col items-end gap-0.5 shrink-0">
+                                  <span className="text-[10px] text-muted-foreground">{n.port_id ?? ''}</span>
+                                  {n.port_desc && <span className="text-[10px] text-muted-foreground/60 truncate max-w-24">{n.port_desc}</span>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </Section>
 

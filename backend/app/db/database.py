@@ -491,6 +491,44 @@ async def init_db() -> None:
         ):
             await _try_migrate(conn, sql, label=label)
 
+        snmp_migrations: list[tuple[str, str]] = [
+            (
+                "device_inventory.snmp_enabled",
+                "ALTER TABLE device_inventory ADD COLUMN snmp_enabled BOOLEAN NOT NULL DEFAULT 0",
+            ),
+            (
+                "device_inventory.snmp_community",
+                "ALTER TABLE device_inventory ADD COLUMN snmp_community TEXT NOT NULL DEFAULT 'public'",
+            ),
+            (
+                "device_inventory.snmp_version",
+                "ALTER TABLE device_inventory ADD COLUMN snmp_version TEXT NOT NULL DEFAULT '2c'",
+            ),
+            (
+                "device_inventory.snmp_port",
+                "ALTER TABLE device_inventory ADD COLUMN snmp_port INTEGER NOT NULL DEFAULT 161",
+            ),
+            ("device_inventory.snmp_oids", "ALTER TABLE device_inventory ADD COLUMN snmp_oids JSON"),
+            (
+                "snmp_metrics.table",
+                "CREATE TABLE IF NOT EXISTS snmp_metrics ("
+                "device_id TEXT NOT NULL REFERENCES device_inventory(id) ON DELETE CASCADE,"
+                "oid TEXT NOT NULL,"
+                "label TEXT,"
+                "value TEXT,"
+                "value_type TEXT,"
+                "polled_at DATETIME NOT NULL,"
+                "PRIMARY KEY (device_id, oid)"
+                ")",
+            ),
+        ]
+        for label, sql in snmp_migrations:
+            await _try_migrate(conn, sql, label=label)
+        with suppress(OperationalError):
+            await conn.exec_driver_sql(
+                "UPDATE device_inventory SET snmp_oids = '[]' WHERE snmp_oids IS NULL"
+            )
+
     await _backfill_node_devices()
     await _drop_legacy_node_columns()
     await _seed_node_views()

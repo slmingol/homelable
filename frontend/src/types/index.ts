@@ -84,7 +84,24 @@ export type EdgeType = 'ethernet' | 'wifi' | 'iot' | 'vlan' | 'virtual' | 'clust
 
 export type NodeStatus = 'online' | 'offline' | 'pending' | 'unknown'
 
-export type CheckMethod = 'ping' | 'http' | 'https' | 'tcp' | 'ssh' | 'prometheus' | 'health' | 'none'
+export type CheckMethod = 'ping' | 'http' | 'https' | 'tcp' | 'ssh' | 'prometheus' | 'health' | 'snmp' | 'none'
+
+export interface SnmpMetric {
+  oid: string
+  label: string | null
+  value: string | null
+  value_type: string | null
+  polled_at: string
+}
+
+export interface LldpNeighbor {
+  local_port_num: number | null
+  chassis_id: string | null
+  port_id: string | null
+  port_desc: string | null
+  sys_name: string | null
+  sys_desc: string | null
+}
 
 export interface ServiceInfo {
   port?: number
@@ -159,6 +176,12 @@ export interface InventoryEntry {
   show_hardware?: boolean
   check_method?: CheckMethod | null
   check_target?: string | null
+  snmp_enabled?: boolean
+  snmp_community?: string
+  snmp_version?: string
+  snmp_port?: number
+  snmp_oids?: Array<{ oid: string; label: string }>
+  lldp_discovery?: boolean
   /** Live reachability from the status checker — distinct from `status`. */
   status_live?: string
   last_seen?: string | null
