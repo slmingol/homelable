@@ -28,20 +28,22 @@ router = APIRouter()
 _SOURCE = "pfsense"
 
 
+def _credentials_ok() -> bool:
+    return bool(settings.pfsense_url and settings.pfsense_api_key)
+
+
 @router.post("/test-connection", response_model=PfsenseTestConnectionResponse)
 async def test_connection_endpoint(
     _: str = Depends(get_current_user),
 ) -> PfsenseTestConnectionResponse:
-    if not (settings.pfsense_host and settings.pfsense_api_key):
+    if not _credentials_ok():
         raise HTTPException(
             status_code=400,
-            detail="No pfSense host/credentials configured. Set PFSENSE_HOST and PFSENSE_API_KEY in the server .env.",
+            detail="No pfSense URL/credentials configured. Set PFSENSE_URL and PFSENSE_API_KEY in the server .env.",
         )
     connected, message = await test_pfsense_connection(
-        host=settings.pfsense_host,
-        port=settings.pfsense_port,
+        base_url=settings.pfsense_url,
         api_key=settings.pfsense_api_key,
-        scheme=settings.pfsense_scheme,
         verify_tls=settings.pfsense_verify_tls,
     )
     return PfsenseTestConnectionResponse(connected=connected, message=message)
@@ -52,17 +54,15 @@ async def sync_pfsense_now(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ) -> PfsenseImportResponse:
-    if not (settings.pfsense_host and settings.pfsense_api_key):
+    if not _credentials_ok():
         raise HTTPException(
             status_code=400,
-            detail="Cannot sync: no pfSense host/credentials configured in the server env.",
+            detail="Cannot sync: no pfSense URL/credentials configured in the server env.",
         )
     try:
         devices = await fetch_pfsense_inventory(
-            host=settings.pfsense_host,
-            port=settings.pfsense_port,
+            base_url=settings.pfsense_url,
             api_key=settings.pfsense_api_key,
-            scheme=settings.pfsense_scheme,
             verify_tls=settings.pfsense_verify_tls,
         )
     except Exception as exc:
@@ -74,12 +74,11 @@ async def sync_pfsense_now(
 @router.get("/config", response_model=PfsenseConfig)
 async def get_pfsense_config(_: str = Depends(get_current_user)) -> PfsenseConfig:
     return PfsenseConfig(
-        host=settings.pfsense_host,
-        port=settings.pfsense_port,
+        url=settings.pfsense_url,
         verify_tls=settings.pfsense_verify_tls,
         sync_enabled=settings.pfsense_sync_enabled,
         sync_interval=settings.pfsense_sync_interval,
-        credentials_configured=bool(settings.pfsense_host and settings.pfsense_api_key),
+        credentials_configured=_credentials_ok(),
     )
 
 
@@ -88,10 +87,10 @@ async def save_pfsense_config(
     payload: PfsenseSyncConfig,
     _: str = Depends(get_current_user),
 ) -> PfsenseConfig:
-    if payload.sync_enabled and not (settings.pfsense_host and settings.pfsense_api_key):
+    if payload.sync_enabled and not _credentials_ok():
         raise HTTPException(
             status_code=400,
-            detail="Cannot enable auto-sync: no pfSense host/credentials configured in the server env.",
+            detail="Cannot enable auto-sync: no pfSense URL/credentials configured in the server env.",
         )
     try:
         settings.pfsense_sync_enabled = payload.sync_enabled
@@ -105,7 +104,7 @@ async def save_pfsense_config(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return await get_pfsense_config()
+    return await get_pfsense_config(_)
 
 
 async def _persist_devices(
@@ -173,8 +172,7 @@ async def _background_pfsense_sync(run_id: str) -> None:
     async with AsyncSessionLocal() as db:
         try:
             devices = await fetch_pfsense_inventory(
-                host=settings.pfsense_host,
-                port=settings.pfsense_port,
+                base_url=settings.pfsense_url,
                 api_key=settings.pfsense_api_key,
                 verify_tls=settings.pfsense_verify_tls,
             )
