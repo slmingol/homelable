@@ -153,6 +153,10 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
     active_clients: false,
   })
   const [unSyncing, setUnSyncing] = useState(false)
+  const [ufConfig, setUfConfig] = useState<UnifiConfigData | null>(null)
+  const [ufSyncEnabled, setUfSyncEnabled] = useState(false)
+  const [ufInterval, setUfInterval] = useState(3600)
+  const [ufSyncing, setUfSyncing] = useState(false)
   const [alignment, setAlignment] = useState<AlignmentSettings>(readAlignmentSettings)
   const [autosave, setAutosave] = useState<AutosaveSettings>(readAutosaveSettings)
   const anyUnifiSource = unModes.infrastructure || unModes.known_clients || unModes.active_clients
@@ -198,6 +202,9 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
         setUnSyncEnabled(res.data.sync_enabled)
         setUnInterval(res.data.sync_interval)
         setUnModes(res.data.modes)
+        setUfConfig(res.data)
+        setUfSyncEnabled(res.data.sync_enabled)
+        setUfInterval(res.data.sync_interval)
       })
       .catch(() => {/* unifi not configured */})
   }, [open])
@@ -263,6 +270,18 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
       toast.error('Failed to start Z-Wave sync')
     } finally {
       setZwSyncing(false)
+    }
+  }
+
+  const handleUfSyncNow = async () => {
+    setUfSyncing(true)
+    try {
+      await unifiApi.syncNow()
+      toast.success('UniFi sync started')
+    } catch {
+      toast.error('Failed to start UniFi sync')
+    } finally {
+      setUfSyncing(false)
     }
   }
 
@@ -513,6 +532,69 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
               syncing={zwSyncing}
               onSyncNow={handleZwSyncNow}
             />
+          )}
+
+          {/* UniFi auto-sync */}
+          {!STANDALONE && ufConfig && (
+          <div className="pt-3 border-t border-border space-y-2">
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">UniFi auto-sync</span>
+            {!ufConfig.credentials_configured ? (
+              <p className="text-[10px] text-[#e3b341] leading-tight">
+                No credentials configured. Set <span className="font-mono">UNIFI_USERNAME</span> and{' '}
+                <span className="font-mono">UNIFI_PASSWORD</span> in the server .env to enable auto-sync.
+              </p>
+            ) : (
+              <>
+                <label className="flex items-center justify-between gap-2 cursor-pointer">
+                  <span className="text-xs text-foreground">Auto-sync UniFi inventory</span>
+                  <input
+                    type="checkbox"
+                    checked={ufSyncEnabled}
+                    onChange={(e) => setUfSyncEnabled(e.target.checked)}
+                    className="cursor-pointer accent-[#0066cc]"
+                    aria-label="Toggle UniFi auto-sync"
+                  />
+                </label>
+                <div className={ufSyncEnabled ? 'space-y-1.5' : 'space-y-1.5 opacity-50 pointer-events-none'}>
+                  <label className="text-xs text-muted-foreground">Sync interval (s)</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={300}
+                      max={86400}
+                      value={ufInterval}
+                      onChange={(e) => { const v = Number(e.target.value); if (!isNaN(v)) setUfInterval(v) }}
+                      className="w-24 px-2 py-1 rounded-md text-xs font-mono bg-[#0d1117] border border-border text-foreground focus:outline-none focus:border-[#0066cc]"
+                      aria-label="UniFi sync interval"
+                    />
+                    <span className="text-xs text-muted-foreground">seconds</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-tight">
+                    Re-imports UniFi devices (APs, switches, gateways) into the pending inventory. Min 300s.
+                  </p>
+                </div>
+                {ufConfig.host ? (
+                  <div className="flex items-center gap-2 pt-1">
+                    <Button
+                      variant="outline"
+                      onClick={handleUfSyncNow}
+                      disabled={ufSyncing}
+                      className="h-7 text-xs border-[#0066cc] text-[#0066cc] hover:bg-[#0066cc]/10"
+                    >
+                      {ufSyncing ? 'Syncing…' : 'Re-sync now'}
+                    </Button>
+                    <span className="text-[10px] text-muted-foreground leading-tight">
+                      Runs one import immediately using the server .env config.
+                    </span>
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-[#e3b341] leading-tight pt-1">
+                    Set <span className="font-mono">UNIFI_HOST</span> in the server .env to enable manual re-sync.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
           )}
 
           {/* Proxmox auto-sync */}
