@@ -91,6 +91,7 @@ const CHECK_METHOD_LABELS: Record<CheckMethod, string> = {
   ssh: 'SSH',
   prometheus: 'Prometheus',
   health: 'Health',
+  snmp: 'SNMP',
 }
 
 const DEFAULT_DATA: Partial<NodeData> = {
