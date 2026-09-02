@@ -507,3 +507,51 @@ export const unifiApi = {
     api.post<UnifiConfigData>('/unifi/config', data),
   syncNow: () => api.post<UnifiImportResult>('/unifi/sync-now'),
 }
+
+export interface OpnsenseConfigData {
+  host: string
+  port: number
+  verify_tls: boolean
+  sync_enabled: boolean
+  sync_interval: number
+  credentials_configured: boolean
+}
+
+export interface OpnsenseImportResult {
+  device_count: number
+  pending_created: number
+  pending_updated: number
+}
+
+export const opnsenseApi = {
+  testConnection: () =>
+    api.post<{ connected: boolean; message: string }>('/opnsense/test-connection'),
+  getConfig: () => api.get<OpnsenseConfigData>('/opnsense/config'),
+  saveConfig: (data: { sync_enabled: boolean; sync_interval: number }) =>
+    api.post<OpnsenseConfigData>('/opnsense/config', data),
+  syncNow: () => api.post<OpnsenseImportResult>('/opnsense/sync-now'),
+}
+
+export interface PfsenseConfigData {
+  host: string
+  port: number
+  verify_tls: boolean
+  sync_enabled: boolean
+  sync_interval: number
+  credentials_configured: boolean
+}
+
+export interface PfsenseImportResult {
+  device_count: number
+  pending_created: number
+  pending_updated: number
+}
+
+export const pfsenseApi = {
+  testConnection: () =>
+    api.post<{ connected: boolean; message: string }>('/pfsense/test-connection'),
+  getConfig: () => api.get<PfsenseConfigData>('/pfsense/config'),
+  saveConfig: (data: { sync_enabled: boolean; sync_interval: number }) =>
+    api.post<PfsenseConfigData>('/pfsense/config', data),
+  syncNow: () => api.post<PfsenseImportResult>('/pfsense/sync-now'),
+}
