@@ -42,6 +42,7 @@ async def test_connection_endpoint(
         port=settings.opnsense_port,
         api_key=settings.opnsense_api_key,
         api_secret=settings.opnsense_api_secret,
+        scheme=settings.opnsense_scheme,
         verify_tls=settings.opnsense_verify_tls,
     )
     return OpnsenseTestConnectionResponse(connected=connected, message=message)
@@ -63,6 +64,7 @@ async def sync_opnsense_now(
             port=settings.opnsense_port,
             api_key=settings.opnsense_api_key,
             api_secret=settings.opnsense_api_secret,
+            scheme=settings.opnsense_scheme,
             verify_tls=settings.opnsense_verify_tls,
         )
     except Exception as exc:

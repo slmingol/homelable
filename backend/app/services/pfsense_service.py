@@ -20,9 +20,10 @@ async def test_pfsense_connection(
     host: str,
     port: int,
     api_key: str,
+    scheme: str = "https",
     verify_tls: bool = False,
 ) -> tuple[bool, str]:
-    base = f"https://{host}:{port}"
+    base = f"{scheme}://{host}:{port}"
     headers = _auth_headers(api_key)
     try:
         async with httpx.AsyncClient(verify=verify_tls, timeout=10.0) as client:
@@ -50,10 +51,11 @@ async def fetch_pfsense_inventory(
     host: str,
     port: int,
     api_key: str,
+    scheme: str = "https",
     verify_tls: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch ARP table + DHCP leases and return normalized device dicts."""
-    base = f"https://{host}:{port}"
+    base = f"{scheme}://{host}:{port}"
     headers = _auth_headers(api_key)
 
     async with httpx.AsyncClient(verify=verify_tls, timeout=15.0) as client:
