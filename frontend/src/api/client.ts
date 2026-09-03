@@ -299,9 +299,11 @@ export const designsApi = {
   update: (id: string, data: { name?: string; icon?: string }) =>
     api.put<import('@/types').Design>(`/designs/${id}`, data),
   delete: (id: string) => api.delete(`/designs/${id}`),
-  autoPlace: (designId: string) =>
-    api.post<{ nodes_placed: number; edges_created: number; skipped: number }>(
+  autoPlace: (designId: string, force = false) =>
+    api.post<{ nodes_placed: number; nodes_moved: number; edges_created: number; skipped: number }>(
       `/designs/${designId}/auto-place`,
+      null,
+      { params: force ? { force: true } : undefined },
     ),
 }
 
