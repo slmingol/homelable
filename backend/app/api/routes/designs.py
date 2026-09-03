@@ -206,14 +206,18 @@ async def update_design(
 @router.post("/{design_id}/auto-place")
 async def auto_place_topology(
     design_id: str,
+    force: bool = False,
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ) -> dict:
-    """Place unplaced approved devices on a design using LLDP topology."""
+    """Place unplaced approved devices on a design using LLDP topology.
+
+    force=true also repositions already-placed nodes.
+    """
     design = await db.get(Design, design_id)
     if not design:
         raise HTTPException(404, "Design not found")
-    return await run_auto_place(design_id=design_id, db=db)
+    return await run_auto_place(design_id=design_id, db=db, force=force)
 
 
 @router.delete("/{design_id}", status_code=204)
