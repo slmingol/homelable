@@ -149,15 +149,24 @@ async def run_auto_place(
       edges_created   — new Edge rows created
       skipped         — devices already on canvas (non-force mode)
     """
-    # --- 1. Load approved devices -----------------------------------------
-    devices: list[InventoryDevice] = (
+    # --- 1. Load devices -----------------------------------------------------
+    # Approved devices are placed on canvas; all non-hidden devices are used
+    # for MAC lookup during topology building so that pending infra devices
+    # (switches, APs) still appear as edge endpoints.
+    approved_devices: list[InventoryDevice] = (
         await db.execute(
             select(InventoryDevice).where(InventoryDevice.status == "approved")
         )
     ).scalars().all()
 
-    if not devices:
+    if not approved_devices:
         return {"nodes_placed": 0, "nodes_moved": 0, "edges_created": 0, "skipped": 0}
+
+    all_devices: list[InventoryDevice] = (
+        await db.execute(
+            select(InventoryDevice).where(InventoryDevice.status != "hidden")
+        )
+    ).scalars().all()
 
     # --- 2. Find which devices already have a node on this design ----------
     existing_nodes: list[Node] = (
@@ -169,7 +178,10 @@ async def run_auto_place(
     }
 
     # --- 3. Build topology adjacency from UniFi + SNMP ---------------------
-    adjacency = await _build_topology(devices)
+    # Pass all non-hidden devices for MAC resolution; placement uses approved only.
+    adjacency = await _build_topology(all_devices)
+
+    devices = approved_devices
 
     # --- 4. BFS tier layout from root devices ------------------------------
     roots: list[str] = [
