@@ -37,6 +37,7 @@ import { DeviceInventoryModal } from '@/components/modals/DeviceInventoryModal'
 import { ScanHistoryModal } from '@/components/modals/ScanHistoryModal'
 import { ShortcutsModal } from '@/components/modals/ShortcutsModal'
 import { ConfirmAddToGroupModal } from '@/components/modals/ConfirmAddToGroupModal'
+import { AutoPlaceModal } from '@/components/modals/AutoPlaceModal'
 import { useCanvasStore } from '@/stores/canvasStore'
 import { readAutosaveSettings, subscribeAutosaveSettings, type AutosaveSettings } from '@/utils/autosaveSettings'
 import { useAutosave } from '@/hooks/useAutosave'
@@ -147,6 +148,7 @@ export default function App() {
   const [zigbeeImportOpen, setZigbeeImportOpen] = useState(false)
   const [zwaveImportOpen, setZwaveImportOpen] = useState(false)
   const [proxmoxImportOpen, setProxmoxImportOpen] = useState(false)
+  const [autoPlaceOpen, setAutoPlaceOpen] = useState(false)
 
   // Declare handleSave before the Ctrl+S effect so it is in scope.
   // Returns true on success, false on failure — the design-switch effect relies
@@ -1073,6 +1075,7 @@ export default function App() {
             <Toolbar
               onSave={handleSave}
               onAutoLayout={handleAutoLayout}
+              onAutoPlaceTopo={() => setAutoPlaceOpen(true)}
               onExport={handleExport}
               onChangeStyle={() => setThemeModalOpen(true)}
               onUndo={undo}
@@ -1371,6 +1374,12 @@ export default function App() {
           open={exportModalOpen}
           onClose={() => setExportModalOpen(false)}
           getElement={() => canvasRef.current?.querySelector<HTMLElement>('.react-flow') ?? null}
+        />
+
+        <AutoPlaceModal
+          open={autoPlaceOpen}
+          onClose={() => setAutoPlaceOpen(false)}
+          onDone={() => loadCanvasFromApi(activeDesignId ?? undefined)}
         />
 
         <Toaster theme="dark" position="bottom-right" />
