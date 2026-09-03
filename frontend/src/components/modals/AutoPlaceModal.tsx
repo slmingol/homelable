@@ -14,6 +14,7 @@ interface AutoPlaceModalProps {
 
 type RunResult = {
   nodes_placed: number
+  nodes_moved: number
   edges_created: number
   skipped: number
 }
@@ -23,6 +24,7 @@ export function AutoPlaceModal({ open, onClose, onDone }: AutoPlaceModalProps) {
   const activeDesignId = useDesignStore((s) => s.activeDesignId)
 
   const [selectedDesignId, setSelectedDesignId] = useState<string>('')
+  const [force, setForce] = useState(false)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<RunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -43,7 +45,7 @@ export function AutoPlaceModal({ open, onClose, onDone }: AutoPlaceModalProps) {
     setResult(null)
     setError(null)
     try {
-      const res = await designsApi.autoPlace(effectiveDesignId)
+      const res = await designsApi.autoPlace(effectiveDesignId, force)
       setResult(res.data)
       onDone()
     } catch (e: unknown) {
@@ -75,6 +77,12 @@ export function AutoPlaceModal({ open, onClose, onDone }: AutoPlaceModalProps) {
                 <span className="text-muted-foreground">Nodes placed</span>
                 <span className="font-mono text-[#39d353]">{result.nodes_placed}</span>
               </div>
+              {result.nodes_moved > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Nodes repositioned</span>
+                  <span className="font-mono text-[#e3b341]">{result.nodes_moved}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Edges created</span>
                 <span className="font-mono text-[#58a6ff]">{result.edges_created}</span>
@@ -111,9 +119,22 @@ export function AutoPlaceModal({ open, onClose, onDone }: AutoPlaceModalProps) {
               </select>
             </div>
 
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={force}
+                onChange={(e) => setForce(e.target.checked)}
+                disabled={running}
+                className="accent-[#58a6ff]"
+              />
+              <span className="text-xs text-muted-foreground">
+                Re-layout existing nodes (topology-aware)
+              </span>
+            </label>
+
             <p className="text-xs text-muted-foreground leading-relaxed">
-              LLDP walks all SNMP-enabled devices, then places unplaced approved devices using a
-              tier layout. Existing node positions are not changed.
+              LLDP walks all SNMP-enabled devices and places unplaced approved devices in a tier
+              layout. Check the box to also reposition existing nodes by topology.
             </p>
 
             {error && (

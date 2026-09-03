@@ -28,13 +28,18 @@ _ROOT_TYPES = {"router", "gateway", "firewall", "switch"}
 async def run_auto_place(
     design_id: str,
     db: AsyncSession,
+    force: bool = False,
 ) -> dict[str, Any]:
-    """Place unplaced approved devices onto design_id using LLDP topology.
+    """Place (or re-layout) approved devices onto design_id using LLDP topology.
+
+    force=False (default): only place devices not yet on the canvas.
+    force=True: reposition ALL existing nodes using LLDP tier layout too.
 
     Returns a summary dict:
-      nodes_placed   — how many new Node rows were created
-      edges_created  — how many new Edge rows were created
-      skipped        — devices that were already on this design
+      nodes_placed    — new Node rows created
+      nodes_moved     — existing nodes repositioned (force mode only)
+      edges_created   — new Edge rows created
+      skipped         — devices already on canvas (non-force mode)
     """
     # --- 1. Load approved devices -----------------------------------------
     devices: list[InventoryDevice] = (
@@ -151,8 +156,9 @@ async def run_auto_place(
             x = start_x + i * NODE_WIDTH
             position[dev_id] = (x, y)
 
-    # --- 6. Create Node rows for unplaced devices -------------------------
+    # --- 6. Create Node rows for unplaced devices (or reposition all) -------
     nodes_placed = 0
+    nodes_moved = 0
     skipped = 0
     new_node_by_dev: dict[str, str] = {}
 
@@ -160,16 +166,22 @@ async def run_auto_place(
     existing_node_by_dev: dict[str, str] = {
         n.device_id: n.id for n in existing_nodes if n.device_id
     }
+    existing_node_obj: dict[str, Node] = {
+        n.device_id: n for n in existing_nodes if n.device_id
+    }
 
     for dev in devices:
+        x, y = position.get(dev.id, (0.0, float((max_tier + 2) * TIER_HEIGHT)))
         if dev.id in placed_device_ids:
-            skipped += 1
-            existing_node_by_dev.setdefault(dev.id, next(
-                (n.id for n in existing_nodes if n.device_id == dev.id), ""
-            ))
+            if force:
+                node = existing_node_obj[dev.id]
+                node.pos_x = x
+                node.pos_y = y
+                nodes_moved += 1
+            else:
+                skipped += 1
             continue
 
-        x, y = position.get(dev.id, (0.0, float((max_tier + 2) * TIER_HEIGHT)))
         node_id = str(uuid.uuid4())
         label = dev.label or dev.hostname or dev.mac or dev.ip or dev.id
         node_type = dev.type or dev.suggested_type or "device"
@@ -225,11 +237,12 @@ async def run_auto_place(
 
     await db.commit()
     logger.info(
-        "auto_place design=%s: placed=%d edges=%d skipped=%d",
-        design_id, nodes_placed, edges_created, skipped,
+        "auto_place design=%s: placed=%d moved=%d edges=%d skipped=%d",
+        design_id, nodes_placed, nodes_moved, edges_created, skipped,
     )
     return {
         "nodes_placed": nodes_placed,
+        "nodes_moved": nodes_moved,
         "edges_created": edges_created,
         "skipped": skipped,
     }
