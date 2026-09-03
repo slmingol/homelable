@@ -33,7 +33,7 @@ async def test_opnsense_connection(
             if r.status_code != 200:
                 return False, f"Unexpected response {r.status_code} from {base_url}"
             data = r.json()
-            rows = data.get("rows", [])
+            rows = data if isinstance(data, list) else data.get("rows", [])
             return True, f"Connected — {len(rows)} ARP entr{'y' if len(rows) == 1 else 'ies'} found"
     except httpx.ConnectError as exc:
         return False, f"Cannot reach {base_url} — {exc}"
@@ -138,7 +138,10 @@ async def _fetch_arp(
     try:
         r = await client.get(f"{base}/api/diagnostics/interface/getArp", headers=headers)
         r.raise_for_status()
-        return r.json().get("rows", [])
+        data = r.json()
+        if isinstance(data, list):
+            return data
+        return data.get("rows", [])
     except Exception as exc:
         logger.warning("OPNsense ARP fetch failed: %s", exc)
         return []

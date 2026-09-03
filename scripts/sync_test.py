@@ -41,7 +41,8 @@ async def test_opnsense():
                 headers={"Authorization": f"Basic {token}"},
             )
             if r.status_code == 200:
-                rows = r.json().get("rows", [])
+                data = r.json()
+                rows = data if isinstance(data, list) else data.get("rows", [])
                 print(f"  OPNsense: connected — {len(rows)} ARP entries")
             else:
                 print(f"  OPNsense: HTTP {r.status_code}: {r.text[:80]}")
