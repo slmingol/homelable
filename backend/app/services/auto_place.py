@@ -1,19 +1,22 @@
 """One-shot topology auto-placement service.
 
-Walk LLDP on every SNMP-enabled approved device, build a hierarchy from the
-neighbor graph, then place unplaced devices on the target design using a simple
-BFS tier layout.  Existing nodes are never moved.
+Build a topology graph from UniFi LLDP/client-association data and
+SNMP/LLDP walks on infrastructure-typed devices only, then place (or
+re-layout) approved devices on the target design using a BFS tier layout.
 """
 import asyncio
 import logging
 import uuid
 from typing import Any
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings as app_settings
 from app.db.models import Edge, InventoryDevice, Node
 from app.services.lldp import discover_neighbors
+from app.services.unifi_service import fetch_unifi_topology
 
 logger = logging.getLogger(__name__)
 
@@ -21,50 +24,83 @@ TIER_HEIGHT = 250
 NODE_WIDTH = 200
 LLDP_TIMEOUT = 5.0
 
-# Device types treated as tier-0 roots when no LLDP parent is found.
-_ROOT_TYPES = {"router", "gateway", "firewall", "switch"}
+# Tier-0 roots (highest in topology hierarchy)
+_ROOT_TYPES = {"router", "gateway", "firewall"}
+
+# Only walk SNMP/LLDP on infrastructure devices — end devices don't run SNMP
+_INFRA_TYPES = {"router", "gateway", "firewall", "switch", "ap"}
 
 
-async def run_auto_place(
-    design_id: str,
-    db: AsyncSession,
-    force: bool = False,
-) -> dict[str, Any]:
-    """Place (or re-layout) approved devices onto design_id using LLDP topology.
+async def _build_topology(
+    devices: list[InventoryDevice],
+) -> dict[str, set[str]]:
+    """Return adjacency map: device_id -> set of neighbor device_ids.
 
-    force=False (default): only place devices not yet on the canvas.
-    force=True: reposition ALL existing nodes using LLDP tier layout too.
-
-    Returns a summary dict:
-      nodes_placed    — new Node rows created
-      nodes_moved     — existing nodes repositioned (force mode only)
-      edges_created   — new Edge rows created
-      skipped         — devices already on canvas (non-force mode)
+    Sources (all non-fatal — partial results are usable):
+      A. UniFi LLDP edges between infrastructure devices
+      B. UniFi client-uplink associations (client -> AP/switch)
+      C. SNMP/LLDP walks on infrastructure-typed approved devices only
     """
-    # --- 1. Load approved devices -----------------------------------------
-    devices: list[InventoryDevice] = (
-        await db.execute(
-            select(InventoryDevice).where(InventoryDevice.status == "approved")
-        )
-    ).scalars().all()
+    # Build MAC / name lookup tables
+    mac_to_dev: dict[str, str] = {}
+    name_to_dev: dict[str, str] = {}
+    for dev in devices:
+        if dev.mac:
+            mac_to_dev[dev.mac.lower()] = dev.id
+        if dev.hostname:
+            name_to_dev[dev.hostname.lower()] = dev.id
+        if dev.label:
+            name_to_dev[dev.label.lower()] = dev.id
 
-    if not devices:
-        return {"nodes_placed": 0, "edges_created": 0, "skipped": 0}
+    adjacency: dict[str, set[str]] = {}
 
-    # Map device_id → device for quick lookup
-    dev_by_id: dict[str, InventoryDevice] = {d.id: d for d in devices}
+    def _add_edge(dev_a: str, dev_b: str) -> None:
+        if dev_a != dev_b:
+            adjacency.setdefault(dev_a, set()).add(dev_b)
+            adjacency.setdefault(dev_b, set()).add(dev_a)
 
-    # --- 2. Find which devices already have a node on this design ----------
-    existing_nodes: list[Node] = (
-        await db.execute(select(Node).where(Node.design_id == design_id))
-    ).scalars().all()
+    # --- A. UniFi topology ---------------------------------------------------
+    s = app_settings
+    host = s.unifi_effective_host
+    port = s.unifi_effective_port
+    if host and s.unifi_username and s.unifi_password:
+        try:
+            topo = await fetch_unifi_topology(
+                host=host,
+                port=port,
+                site=s.unifi_site or "default",
+                username=s.unifi_username,
+                password=s.unifi_password,
+                verify_tls=s.unifi_verify_tls,
+            )
+            # Infrastructure LLDP links
+            for mac_a, mac_b in topo.get("lldp_edges", []):
+                dev_a = mac_to_dev.get(mac_a)
+                dev_b = mac_to_dev.get(mac_b)
+                if dev_a and dev_b:
+                    _add_edge(dev_a, dev_b)
 
-    placed_device_ids: set[str] = {
-        n.device_id for n in existing_nodes if n.device_id
-    }
+            # Client -> AP/switch uplinks
+            for client_mac, uplink_mac in topo.get("client_uplinks", {}).items():
+                dev_client = mac_to_dev.get(client_mac)
+                dev_uplink = mac_to_dev.get(uplink_mac)
+                if dev_client and dev_uplink:
+                    _add_edge(dev_client, dev_uplink)
 
-    # --- 3. Walk LLDP on SNMP-enabled devices ------------------------------
-    snmp_devices = [d for d in devices if d.snmp_enabled and d.ip]
+            logger.info(
+                "auto_place: UniFi topology — %d LLDP edges, %d client uplinks",
+                len(topo.get("lldp_edges", [])),
+                len(topo.get("client_uplinks", {})),
+            )
+        except Exception as exc:
+            logger.warning("auto_place: UniFi topology fetch failed: %s", exc)
+
+    # --- B. SNMP/LLDP — infrastructure devices only -------------------------
+    snmp_infra = [
+        d for d in devices
+        if d.snmp_enabled and d.ip
+        and (d.type or d.suggested_type or "").lower() in _INFRA_TYPES
+    ]
 
     async def _walk(dev: InventoryDevice) -> tuple[str, list[dict[str, Any]]]:
         try:
@@ -80,69 +116,88 @@ async def run_auto_place(
             neighbors = []
         return dev.id, neighbors
 
-    results = await asyncio.gather(*[_walk(d) for d in snmp_devices], return_exceptions=True)
+    if snmp_infra:
+        results = await asyncio.gather(*[_walk(d) for d in snmp_infra], return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                continue
+            dev_id, neighbors = result
+            for n in neighbors:
+                chassis = (n.get("chassis_id") or "").lower().strip()
+                sys_name = (n.get("sys_name") or "").lower().strip()
+                neighbor_dev_id = mac_to_dev.get(chassis) or name_to_dev.get(sys_name)
+                if neighbor_dev_id:
+                    _add_edge(dev_id, neighbor_dev_id)
+        logger.info("auto_place: SNMP walk on %d infra device(s)", len(snmp_infra))
 
-    # Build adjacency: chassis_id / sys_name → device_id
-    # Also collect: for each device, which neighbor chassis IDs it sees
-    mac_to_dev: dict[str, str] = {}
-    name_to_dev: dict[str, str] = {}
-    for dev in devices:
-        if dev.mac:
-            mac_to_dev[dev.mac.lower()] = dev.id
-        if dev.hostname:
-            name_to_dev[dev.hostname.lower()] = dev.id
-        label = (dev.label or "").lower()
-        if label:
-            name_to_dev[label] = dev.id
+    return adjacency
 
-    # device_id → set of neighbor device_ids (from LLDP)
-    lldp_neighbors: dict[str, set[str]] = {}
 
-    for result in results:
-        if isinstance(result, Exception):
-            continue
-        dev_id, neighbors = result
-        for n in neighbors:
-            chassis = (n.get("chassis_id") or "").lower().strip()
-            sys_name = (n.get("sys_name") or "").lower().strip()
-            neighbor_dev_id = mac_to_dev.get(chassis) or name_to_dev.get(sys_name)
-            if neighbor_dev_id and neighbor_dev_id != dev_id:
-                lldp_neighbors.setdefault(dev_id, set()).add(neighbor_dev_id)
-                lldp_neighbors.setdefault(neighbor_dev_id, set()).add(dev_id)
+async def run_auto_place(
+    design_id: str,
+    db: AsyncSession,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Place (or re-layout) approved devices onto design_id using topology data.
 
-    # --- 4. Determine tier / BFS from roots --------------------------------
-    roots: list[str] = []
-    for dev in devices:
-        dev_type = (dev.type or dev.suggested_type or "").lower()
-        if dev_type in _ROOT_TYPES:
-            roots.append(dev.id)
+    force=False (default): only place devices not yet on the canvas.
+    force=True: reposition ALL existing nodes using the topology tier layout.
+
+    Returns:
+      nodes_placed    — new Node rows created
+      nodes_moved     — existing nodes repositioned (force mode only)
+      edges_created   — new Edge rows created
+      skipped         — devices already on canvas (non-force mode)
+    """
+    # --- 1. Load approved devices -----------------------------------------
+    devices: list[InventoryDevice] = (
+        await db.execute(
+            select(InventoryDevice).where(InventoryDevice.status == "approved")
+        )
+    ).scalars().all()
+
+    if not devices:
+        return {"nodes_placed": 0, "nodes_moved": 0, "edges_created": 0, "skipped": 0}
+
+    # --- 2. Find which devices already have a node on this design ----------
+    existing_nodes: list[Node] = (
+        await db.execute(select(Node).where(Node.design_id == design_id))
+    ).scalars().all()
+
+    placed_device_ids: set[str] = {
+        n.device_id for n in existing_nodes if n.device_id
+    }
+
+    # --- 3. Build topology adjacency from UniFi + SNMP ---------------------
+    adjacency = await _build_topology(devices)
+
+    # --- 4. BFS tier layout from root devices ------------------------------
+    roots: list[str] = [
+        d.id for d in devices
+        if (d.type or d.suggested_type or "").lower() in _ROOT_TYPES
+    ]
 
     if not roots:
-        # Fall back: devices with the most LLDP neighbors
-        if lldp_neighbors:
-            roots = [max(lldp_neighbors, key=lambda k: len(lldp_neighbors[k]))]
+        if adjacency:
+            roots = [max(adjacency, key=lambda k: len(adjacency[k]))]
         else:
             roots = [devices[0].id]
 
-    tier: dict[str, int] = {}
+    tier: dict[str, int] = {r: 0 for r in roots}
     queue = list(roots)
-    for r in roots:
-        tier[r] = 0
-
     while queue:
         current_id = queue.pop(0)
-        for neighbor_id in lldp_neighbors.get(current_id, set()):
+        for neighbor_id in adjacency.get(current_id, set()):
             if neighbor_id not in tier:
                 tier[neighbor_id] = tier[current_id] + 1
                 queue.append(neighbor_id)
 
-    # Devices with no LLDP at all get a catch-all tier at the bottom
     max_tier = max(tier.values(), default=0)
-    ungrouped: list[str] = [d.id for d in devices if d.id not in tier]
-    for dev_id in ungrouped:
-        tier[dev_id] = max_tier + 1
+    for dev in devices:
+        if dev.id not in tier:
+            tier[dev.id] = max_tier + 1
 
-    # --- 5. Compute layout positions ---------------------------------------
+    # --- 5. Compute positions ----------------------------------------------
     tiers: dict[int, list[str]] = {}
     for dev_id, t in tier.items():
         tiers.setdefault(t, []).append(dev_id)
@@ -153,16 +208,14 @@ async def run_auto_place(
         total_width = len(ids) * NODE_WIDTH
         start_x = -total_width / 2
         for i, dev_id in enumerate(ids):
-            x = start_x + i * NODE_WIDTH
-            position[dev_id] = (x, y)
+            position[dev_id] = (start_x + i * NODE_WIDTH, y)
 
-    # --- 6. Create Node rows for unplaced devices (or reposition all) -------
+    # --- 6. Create / reposition Node rows ----------------------------------
     nodes_placed = 0
     nodes_moved = 0
     skipped = 0
     new_node_by_dev: dict[str, str] = {}
 
-    # Build existing device→node map for edge creation
     existing_node_by_dev: dict[str, str] = {
         n.device_id: n.id for n in existing_nodes if n.device_id
     }
@@ -185,7 +238,7 @@ async def run_auto_place(
         node_id = str(uuid.uuid4())
         label = dev.label or dev.hostname or dev.mac or dev.ip or dev.id
         node_type = dev.type or dev.suggested_type or "device"
-        node = Node(
+        db.add(Node(
             id=node_id,
             type=node_type,
             label=label,
@@ -193,8 +246,7 @@ async def run_auto_place(
             device_id=dev.id,
             pos_x=x,
             pos_y=y,
-        )
-        db.add(node)
+        ))
         new_node_by_dev[dev.id] = node_id
         nodes_placed += 1
 
@@ -202,8 +254,7 @@ async def run_auto_place(
 
     all_node_by_dev = {**existing_node_by_dev, **new_node_by_dev}
 
-    # --- 7. Create Edge rows for LLDP pairs --------------------------------
-    # Existing edges on this design (source,target) to avoid dupes
+    # --- 7. Create Edge rows for topology pairs ----------------------------
     existing_edges: list[Edge] = (
         await db.execute(select(Edge).where(Edge.design_id == design_id))
     ).scalars().all()
@@ -214,18 +265,18 @@ async def run_auto_place(
     edges_created = 0
     seen_pairs: set[frozenset[str]] = set()
 
-    for dev_id, neighbors in lldp_neighbors.items():
+    for dev_id, neighbors in adjacency.items():
         src_node = all_node_by_dev.get(dev_id)
         if not src_node:
             continue
         for neighbor_id in neighbors:
-            pair = frozenset([src_node, all_node_by_dev.get(neighbor_id, "")])
-            if "" in pair:
+            tgt_node = all_node_by_dev.get(neighbor_id)
+            if not tgt_node:
                 continue
+            pair = frozenset([src_node, tgt_node])
             if pair in existing_edge_pairs or pair in seen_pairs:
                 continue
             seen_pairs.add(pair)
-            tgt_node = all_node_by_dev[neighbor_id]
             db.add(Edge(
                 id=str(uuid.uuid4()),
                 source=src_node,
