@@ -926,7 +926,7 @@ export function DeviceInventoryModal({ open, onClose, highlightId, initialStatus
                   Restore ({selectedIds.size})
                 </button>
               )}
-              {statusFilter === 'approved' && (
+              {statusFilter === 'pending' && (
                 <>
                   <button
                     onClick={() => handleBulkSnmp(true)}
