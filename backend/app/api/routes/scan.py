@@ -762,6 +762,37 @@ async def bulk_restore_devices(
     return {"restored": len(devices), "skipped": len(payload.device_ids) - len(devices)}
 
 
+class BulkSnmpRequest(BaseModel):
+    device_ids: list[str]  # empty list = all approved devices
+    snmp_enabled: bool
+    snmp_community: str | None = None
+    snmp_port: int | None = None
+
+
+@router.post("/bulk-snmp", response_model=dict)
+async def bulk_set_snmp(
+    payload: BulkSnmpRequest,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Enable or disable SNMP on multiple devices at once.
+
+    If device_ids is empty, applies to ALL approved devices.
+    """
+    query = select(InventoryDevice).where(InventoryDevice.status == "approved")
+    if payload.device_ids:
+        query = query.where(InventoryDevice.id.in_(payload.device_ids))
+    devices = (await db.execute(query)).scalars().all()
+    for device in devices:
+        device.snmp_enabled = payload.snmp_enabled
+        if payload.snmp_community is not None:
+            device.snmp_community = payload.snmp_community
+        if payload.snmp_port is not None:
+            device.snmp_port = payload.snmp_port
+    await db.commit()
+    return {"updated": len(devices), "snmp_enabled": payload.snmp_enabled}
+
+
 @router.post("/pending/{device_id}/approve", response_model=dict)
 async def approve_device(
     device_id: str,
