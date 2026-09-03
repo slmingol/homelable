@@ -15,8 +15,7 @@ class OpnsenseTestConnectionResponse(BaseModel):
 
 
 class OpnsenseConfig(BaseModel):
-    host: str
-    port: int
+    url: str
     verify_tls: bool
     sync_enabled: bool
     sync_interval: int

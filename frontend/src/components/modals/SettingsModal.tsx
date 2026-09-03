@@ -615,7 +615,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">OPNsense auto-sync</span>
             {!opnConfig.credentials_configured ? (
               <p className="text-[10px] text-[#e3b341] leading-tight">
-                No credentials configured. Set <span className="font-mono">OPNSENSE_HOST</span>,{' '}
+                No credentials configured. Set <span className="font-mono">OPNSENSE_URL</span>,{' '}
                 <span className="font-mono">OPNSENSE_API_KEY</span> and{' '}
                 <span className="font-mono">OPNSENSE_API_SECRET</span> in the server .env to enable auto-sync.
               </p>
@@ -649,7 +649,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     Re-imports OPNsense ARP table and DHCP leases into the pending inventory. Min 300s.
                   </p>
                 </div>
-                {opnConfig.host ? (
+                {opnConfig.url ? (
                   <div className="flex items-center gap-2 pt-1">
                     <Button
                       variant="outline"
@@ -665,7 +665,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   </div>
                 ) : (
                   <p className="text-[10px] text-[#e3b341] leading-tight pt-1">
-                    Set <span className="font-mono">OPNSENSE_HOST</span> in the server .env to enable manual re-sync.
+                    Set <span className="font-mono">OPNSENSE_URL</span> in the server .env to enable manual re-sync.
                   </p>
                 )}
               </>
@@ -679,7 +679,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">pfSense auto-sync</span>
             {!pfConfig.credentials_configured ? (
               <p className="text-[10px] text-[#e3b341] leading-tight">
-                No credentials configured. Set <span className="font-mono">PFSENSE_HOST</span> and{' '}
+                No credentials configured. Set <span className="font-mono">PFSENSE_URL</span> and{' '}
                 <span className="font-mono">PFSENSE_API_KEY</span> in the server .env to enable auto-sync.
               </p>
             ) : (
@@ -712,7 +712,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                     Re-imports pfSense ARP table and DHCP leases into the pending inventory. Min 300s.
                   </p>
                 </div>
-                {pfConfig.host ? (
+                {pfConfig.url ? (
                   <div className="flex items-center gap-2 pt-1">
                     <Button
                       variant="outline"
@@ -728,7 +728,7 @@ export function SettingsModal({ open, onClose }: SettingsModalProps) {
                   </div>
                 ) : (
                   <p className="text-[10px] text-[#e3b341] leading-tight pt-1">
-                    Set <span className="font-mono">PFSENSE_HOST</span> in the server .env to enable manual re-sync.
+                    Set <span className="font-mono">PFSENSE_URL</span> in the server .env to enable manual re-sync.
                   </p>
                 )}
               </>

@@ -28,18 +28,21 @@ router = APIRouter()
 _SOURCE = "opnsense"
 
 
+def _credentials_ok() -> bool:
+    return bool(settings.opnsense_url and settings.opnsense_api_key and settings.opnsense_api_secret)
+
+
 @router.post("/test-connection", response_model=OpnsenseTestConnectionResponse)
 async def test_connection_endpoint(
     _: str = Depends(get_current_user),
 ) -> OpnsenseTestConnectionResponse:
-    if not (settings.opnsense_host and settings.opnsense_api_key and settings.opnsense_api_secret):
+    if not _credentials_ok():
         raise HTTPException(
             status_code=400,
-            detail="No OPNsense host/credentials configured. Set OPNSENSE_HOST, OPNSENSE_API_KEY, OPNSENSE_API_SECRET in the server .env.",
+            detail="No OPNsense URL/credentials configured. Set OPNSENSE_URL, OPNSENSE_API_KEY, OPNSENSE_API_SECRET in the server .env.",
         )
     connected, message = await test_opnsense_connection(
-        host=settings.opnsense_host,
-        port=settings.opnsense_port,
+        base_url=settings.opnsense_url,
         api_key=settings.opnsense_api_key,
         api_secret=settings.opnsense_api_secret,
         verify_tls=settings.opnsense_verify_tls,
@@ -52,15 +55,14 @@ async def sync_opnsense_now(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(get_current_user),
 ) -> OpnsenseImportResponse:
-    if not (settings.opnsense_host and settings.opnsense_api_key and settings.opnsense_api_secret):
+    if not _credentials_ok():
         raise HTTPException(
             status_code=400,
-            detail="Cannot sync: no OPNsense host/credentials configured in the server env.",
+            detail="Cannot sync: no OPNsense URL/credentials configured in the server env.",
         )
     try:
         devices = await fetch_opnsense_inventory(
-            host=settings.opnsense_host,
-            port=settings.opnsense_port,
+            base_url=settings.opnsense_url,
             api_key=settings.opnsense_api_key,
             api_secret=settings.opnsense_api_secret,
             verify_tls=settings.opnsense_verify_tls,
@@ -74,14 +76,11 @@ async def sync_opnsense_now(
 @router.get("/config", response_model=OpnsenseConfig)
 async def get_opnsense_config(_: str = Depends(get_current_user)) -> OpnsenseConfig:
     return OpnsenseConfig(
-        host=settings.opnsense_host,
-        port=settings.opnsense_port,
+        url=settings.opnsense_url,
         verify_tls=settings.opnsense_verify_tls,
         sync_enabled=settings.opnsense_sync_enabled,
         sync_interval=settings.opnsense_sync_interval,
-        credentials_configured=bool(
-            settings.opnsense_host and settings.opnsense_api_key and settings.opnsense_api_secret
-        ),
+        credentials_configured=_credentials_ok(),
     )
 
 
@@ -90,12 +89,10 @@ async def save_opnsense_config(
     payload: OpnsenseSyncConfig,
     _: str = Depends(get_current_user),
 ) -> OpnsenseConfig:
-    if payload.sync_enabled and not (
-        settings.opnsense_host and settings.opnsense_api_key and settings.opnsense_api_secret
-    ):
+    if payload.sync_enabled and not _credentials_ok():
         raise HTTPException(
             status_code=400,
-            detail="Cannot enable auto-sync: no OPNsense host/credentials configured in the server env.",
+            detail="Cannot enable auto-sync: no OPNsense URL/credentials configured in the server env.",
         )
     try:
         settings.opnsense_sync_enabled = payload.sync_enabled
@@ -109,7 +106,7 @@ async def save_opnsense_config(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return await get_opnsense_config()
+    return await get_opnsense_config(_)
 
 
 async def _persist_devices(
@@ -177,8 +174,7 @@ async def _background_opnsense_sync(run_id: str) -> None:
     async with AsyncSessionLocal() as db:
         try:
             devices = await fetch_opnsense_inventory(
-                host=settings.opnsense_host,
-                port=settings.opnsense_port,
+                base_url=settings.opnsense_url,
                 api_key=settings.opnsense_api_key,
                 api_secret=settings.opnsense_api_secret,
                 verify_tls=settings.opnsense_verify_tls,

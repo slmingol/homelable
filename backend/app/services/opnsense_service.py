@@ -18,13 +18,12 @@ def _auth_header(api_key: str, api_secret: str) -> dict[str, str]:
 
 
 async def test_opnsense_connection(
-    host: str,
-    port: int,
+    base_url: str,
     api_key: str,
     api_secret: str,
     verify_tls: bool = False,
 ) -> tuple[bool, str]:
-    base = f"https://{host}:{port}"
+    base = base_url.rstrip("/")
     headers = _auth_header(api_key, api_secret)
     try:
         async with httpx.AsyncClient(verify=verify_tls, timeout=10.0) as client:
@@ -32,25 +31,24 @@ async def test_opnsense_connection(
             if r.status_code == 401:
                 return False, "Authentication failed: invalid API key or secret"
             if r.status_code != 200:
-                return False, f"Unexpected response {r.status_code} from {host}"
+                return False, f"Unexpected response {r.status_code} from {base_url}"
             data = r.json()
-            rows = data.get("rows", [])
+            rows = data if isinstance(data, list) else data.get("rows", [])
             return True, f"Connected — {len(rows)} ARP entr{'y' if len(rows) == 1 else 'ies'} found"
     except httpx.ConnectError as exc:
-        return False, f"Cannot reach {host}:{port} — {exc}"
+        return False, f"Cannot reach {base_url} — {exc}"
     except Exception as exc:
         return False, str(exc)
 
 
 async def fetch_opnsense_inventory(
-    host: str,
-    port: int,
+    base_url: str,
     api_key: str,
     api_secret: str,
     verify_tls: bool = False,
 ) -> list[dict[str, Any]]:
     """Fetch ARP table + DHCP leases and return normalized device dicts."""
-    base = f"https://{host}:{port}"
+    base = base_url.rstrip("/")
     headers = _auth_header(api_key, api_secret)
 
     async with httpx.AsyncClient(verify=verify_tls, timeout=15.0) as client:
@@ -128,7 +126,7 @@ async def fetch_opnsense_inventory(
         })
         seen_macs.add(mac)
 
-    logger.info("OPNsense: %d devices fetched from %s", len(results), host)
+    logger.info("OPNsense: %d devices fetched from %s", len(results), base_url)
     return results
 
 
@@ -140,7 +138,10 @@ async def _fetch_arp(
     try:
         r = await client.get(f"{base}/api/diagnostics/interface/getArp", headers=headers)
         r.raise_for_status()
-        return r.json().get("rows", [])
+        data = r.json()
+        if isinstance(data, list):
+            return data
+        return data.get("rows", [])
     except Exception as exc:
         logger.warning("OPNsense ARP fetch failed: %s", exc)
         return []
