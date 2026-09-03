@@ -121,6 +121,90 @@ async def _fetch_devices(
     return []
 
 
+async def fetch_unifi_topology(
+    host: str,
+    port: int,
+    site: str,
+    username: str,
+    password: str,
+    verify_tls: bool = False,
+) -> dict[str, Any]:
+    """Return UniFi topology: LLDP edges between infra, client uplinks, infra MAC map."""
+    empty: dict[str, Any] = {"lldp_edges": [], "client_uplinks": {}, "infra_macs": {}}
+    client = httpx.AsyncClient(verify=verify_tls, timeout=15.0)
+    try:
+        cookies = await _login(client, host, port, username, password)
+        if not cookies:
+            return empty
+
+        infra_devices = await _fetch_devices(client, host, port, site, cookies)
+        clients = await _fetch_clients(client, host, port, site, cookies)
+
+        lldp_edges: list[tuple[str, str]] = []
+        infra_macs: dict[str, dict[str, str]] = {}
+
+        for device in infra_devices:
+            dev_mac = (device.get("mac") or "").lower()
+            raw_type = (device.get("type") or "").lower()
+            node_type = _TYPE_MAP.get(raw_type, "device")
+            name = device.get("name") or device.get("hostname") or dev_mac
+            if dev_mac:
+                infra_macs[dev_mac] = {"type": node_type, "name": name}
+            for neighbor in (device.get("lldp_table") or []):
+                neighbor_mac = (
+                    neighbor.get("chassis_id") or neighbor.get("lldp_chassis_id") or ""
+                ).lower()
+                if dev_mac and neighbor_mac and dev_mac != neighbor_mac:
+                    lldp_edges.append((dev_mac, neighbor_mac))
+
+        client_uplinks: dict[str, str] = {}
+        for sta in clients:
+            sta_mac = (sta.get("mac") or "").lower()
+            if not sta_mac:
+                continue
+            uplink = (sta.get("ap_mac") or sta.get("sw_mac") or "").lower()
+            if uplink:
+                client_uplinks[sta_mac] = uplink
+
+        return {"lldp_edges": lldp_edges, "client_uplinks": client_uplinks, "infra_macs": infra_macs}
+    except Exception as exc:
+        logger.warning("UniFi topology fetch failed: %s", exc)
+        return empty
+    finally:
+        await client.aclose()
+
+
+async def _fetch_clients(
+    client: httpx.AsyncClient,
+    host: str,
+    port: int,
+    site: str,
+    cookies: dict[str, str],
+) -> list[dict[str, Any]]:
+    """Fetch connected client stations from the UniFi controller."""
+    base = f"https://{host}:{port}"
+    headers = {}
+    if "csrf_token" in cookies:
+        headers["X-CSRF-Token"] = cookies["csrf_token"]
+
+    for path in [
+        f"/proxy/network/api/s/{site}/stat/sta",
+        f"/api/s/{site}/stat/sta",
+    ]:
+        try:
+            r = await client.get(
+                f"{base}{path}",
+                cookies=cookies,
+                headers=headers,
+                follow_redirects=True,
+            )
+            if r.status_code == 200:
+                return r.json().get("data", [])
+        except Exception:
+            continue
+    return []
+
+
 def _normalize(d: dict[str, Any]) -> dict[str, Any]:
     """Convert a raw UniFi device record to a homelable-compatible dict."""
     raw_type = (d.get("type") or "").lower()
