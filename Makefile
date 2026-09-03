@@ -50,7 +50,7 @@ help:
 	@printf "  $(GREEN)%-20s$(RESET)%s\n" "db-query"      "Run SQL: make db-query SQL=\"SELECT ...\""
 	@printf "\n$(BOLD)  MAINTENANCE$(RESET)\n"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "sync-test"     "Test all integration connections"
-	@printf "  $(RED)%-20s$(RESET)%s\n"   "approve-source" "Approve pending devices: make approve-source SOURCE=pfsense"
+	@printf "  $(RED)%-20s$(RESET)%s\n"   "approve-source" "Approve pending devices by source: make approve-source SOURCE=pfsense"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "clean"         "Stop + remove volumes (DESTRUCTIVE)"
 	@printf "\n"
 
@@ -143,11 +143,10 @@ sync-test:
 	@printf "$(BOLD)$(CYAN)══ Integration connection tests ────────────────────$(RESET)\n"
 	@$(COMPOSE) exec -T backend python3 - < $(SCRIPTS)/sync_test.py
 
-SOURCE   ?= pfsense
-PASSWORD ?=
+SOURCE ?= pfsense
 approve-source:
 	@printf "$(BOLD)$(RED)══ Approving pending devices from '$(SOURCE)' ───────$(RESET)\n"
-	@AUTH_PASSWORD="$(PASSWORD)" $(COMPOSE) exec -T -e AUTH_PASSWORD backend python3 - $(SOURCE) < $(SCRIPTS)/approve_source.py
+	@$(COMPOSE) exec -T -e MCP_SERVICE_KEY backend python3 - $(SOURCE) < $(SCRIPTS)/approve_source.py
 
 clean:
 	@printf "$(BOLD)$(RED)══ Clean ────────────────────────────────────────────$(RESET)\n"

@@ -1,7 +1,7 @@
 """Approve all pending inventory devices from a given discovery source.
 
 Usage (via Makefile): make approve-source SOURCE=pfsense
-Reads AUTH_USERNAME / AUTH_PASSWORD from the environment or .env file.
+Authenticates via MCP service key (MCP_SERVICE_KEY from env).
 """
 import asyncio
 import os
@@ -13,19 +13,14 @@ BASE = "http://localhost:8000/api/v1"
 
 
 async def main(source: str) -> None:
-    username = os.environ.get("AUTH_USERNAME", "admin")
-    password = os.environ.get("AUTH_PASSWORD", "")
-    if not password:
-        print(f"  ERROR: AUTH_PASSWORD not set", file=sys.stderr)
+    service_key = os.environ.get("MCP_SERVICE_KEY", "")
+    if not service_key:
+        print("  ERROR: MCP_SERVICE_KEY not set", file=sys.stderr)
         sys.exit(1)
 
+    headers = {"X-Mcp-Service-Key": service_key}
+
     async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(f"{BASE}/auth/login", json={"username": username, "password": password})
-        if r.status_code != 200:
-            print(f"  ERROR: login failed: {r.status_code} {r.text[:120]}", file=sys.stderr)
-            sys.exit(1)
-        token = r.json()["access_token"]
-        headers = {"Authorization": f"Bearer {token}"}
 
         r = await c.get(f"{BASE}/scan/pending", headers=headers)
         r.raise_for_status()
