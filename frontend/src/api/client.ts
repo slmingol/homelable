@@ -208,6 +208,13 @@ export const scanApi = {
   bulkHide: (ids: string[]) => api.post<{ hidden: number; skipped: number }>('/scan/pending/bulk-hide', { device_ids: ids }),
   restore: (id: string) => api.post<{ restored: boolean; device_id: string }>(`/scan/pending/${id}/restore`),
   bulkRestore: (ids: string[]) => api.post<{ restored: number; skipped: number }>('/scan/pending/bulk-restore', { device_ids: ids }),
+  bulkSnmp: (ids: string[], enabled: boolean, community?: string, port?: number) =>
+    api.post<{ updated: number; snmp_enabled: boolean }>('/scan/bulk-snmp', {
+      device_ids: ids,
+      snmp_enabled: enabled,
+      ...(community !== undefined && { snmp_community: community }),
+      ...(port !== undefined && { snmp_port: port }),
+    }),
   stop: (runId: string) => api.post(`/scan/${runId}/stop`),
   getConfig: () => api.get<ScanConfigData>('/scan/config'),
   saveConfig: (data: ScanConfigData) => api.post('/scan/config', data),
@@ -292,6 +299,10 @@ export const designsApi = {
   update: (id: string, data: { name?: string; icon?: string }) =>
     api.put<import('@/types').Design>(`/designs/${id}`, data),
   delete: (id: string) => api.delete(`/designs/${id}`),
+  autoPlace: (designId: string) =>
+    api.post<{ nodes_placed: number; edges_created: number; skipped: number }>(
+      `/designs/${designId}/auto-place`,
+    ),
 }
 
 export const racksApi = {

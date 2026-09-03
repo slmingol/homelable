@@ -8,6 +8,7 @@ from app.api.deps import get_current_user
 from app.db.database import get_db
 from app.db.models import CanvasState, Design, Edge, Node, Rack, RackCable, RackDevice
 from app.schemas.designs import DesignCopy, DesignCreate, DesignResponse, DesignUpdate
+from app.services.auto_place import run_auto_place
 
 router = APIRouter()
 
@@ -200,6 +201,19 @@ async def update_design(
     await db.commit()
     await db.refresh(design)
     return DesignResponse.model_validate(design)
+
+
+@router.post("/{design_id}/auto-place")
+async def auto_place_topology(
+    design_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user),
+) -> dict:
+    """Place unplaced approved devices on a design using LLDP topology."""
+    design = await db.get(Design, design_id)
+    if not design:
+        raise HTTPException(404, "Design not found")
+    return await run_auto_place(design_id=design_id, db=db)
 
 
 @router.delete("/{design_id}", status_code=204)

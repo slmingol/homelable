@@ -462,6 +462,21 @@ export function DeviceInventoryModal({ open, onClose, highlightId, initialStatus
     }
   }
 
+  const handleBulkSnmp = async (enabled: boolean) => {
+    const ids = [...selectedIds]
+    if (ids.length === 0) return
+    try {
+      const res = await scanApi.bulkSnmp(ids, enabled)
+      setDevices((prev) =>
+        prev.map((d) => ids.includes(d.id) ? { ...d, snmp_enabled: enabled } : d)
+      )
+      setSelectedIds(new Set())
+      toast.success(`SNMP ${enabled ? 'enabled' : 'disabled'} on ${res.data.updated} device${res.data.updated !== 1 ? 's' : ''}`)
+    } catch {
+      toast.error('Failed to update SNMP')
+    }
+  }
+
   // Keyboard shortcuts: 's' select-mode, 'a' select-all-visible, Esc clears selection or closes, '/' focuses search
   const searchRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
@@ -737,6 +752,24 @@ export function DeviceInventoryModal({ open, onClose, highlightId, initialStatus
                 >
                   Restore ({selectedIds.size})
                 </button>
+              )}
+              {statusFilter === 'pending' && (
+                <>
+                  <button
+                    onClick={() => handleBulkSnmp(true)}
+                    disabled={selectedIds.size === 0}
+                    className="text-xs px-3 py-1.5 rounded bg-[#58a6ff]/20 text-[#58a6ff] hover:bg-[#58a6ff]/30 disabled:opacity-40 font-medium transition-colors"
+                  >
+                    Enable SNMP ({selectedIds.size})
+                  </button>
+                  <button
+                    onClick={() => handleBulkSnmp(false)}
+                    disabled={selectedIds.size === 0}
+                    className="text-xs px-3 py-1.5 rounded bg-[#8b949e]/20 text-[#8b949e] hover:bg-[#8b949e]/30 disabled:opacity-40 font-medium transition-colors"
+                  >
+                    Disable SNMP ({selectedIds.size})
+                  </button>
+                </>
               )}
             </div>
           )}
