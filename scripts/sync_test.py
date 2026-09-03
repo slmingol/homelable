@@ -58,18 +58,19 @@ async def test_pfsense():
         return
     base = url.rstrip("/")
     async with httpx.AsyncClient(verify=False, timeout=10) as c:
-        for path in ["/api/v1/diagnostics/arp", "/api/v2/diagnostics/arp-table"]:
-            try:
-                r = await c.get(f"{base}{path}", headers={"Authorization": key})
-                if r.status_code == 200:
-                    data = r.json()
-                    rows = data.get("data", []) if isinstance(data.get("data"), list) else []
-                    print(f"  pfSense : connected via {path} — {len(rows)} ARP entries")
-                    return
-                print(f"  pfSense : {path} → HTTP {r.status_code}: {r.text[:120]}")
-            except Exception as e:
-                print(f"  pfSense : {path} → {repr(e)}")
-    print("  pfSense : no supported API path succeeded")
+        try:
+            r = await c.post(
+                f"{base}/api/v2/diagnostics/command_prompt",
+                headers={"x-api-key": key},
+                json={"command": "arp -an 2>/dev/null | wc -l"},
+            )
+            if r.status_code == 200:
+                output = (r.json().get("data") or {}).get("output", "").strip()
+                print(f"  pfSense : connected — ~{output} ARP entries (command_prompt)")
+            else:
+                print(f"  pfSense : HTTP {r.status_code}: {r.text[:120]}")
+        except Exception as e:
+            print(f"  pfSense : {repr(e)}")
 
 
 async def main():
