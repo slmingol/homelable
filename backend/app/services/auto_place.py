@@ -81,17 +81,46 @@ async def _build_topology(
                     _add_edge(dev_a, dev_b)
 
             # Client -> AP/switch uplinks
+            unmatched_clients: list[str] = []
+            unmatched_uplinks: list[str] = []
+            matched_uplinks = 0
             for client_mac, uplink_mac in topo.get("client_uplinks", {}).items():
                 dev_client = mac_to_dev.get(client_mac)
                 dev_uplink = mac_to_dev.get(uplink_mac)
                 if dev_client and dev_uplink:
                     _add_edge(dev_client, dev_uplink)
+                    matched_uplinks += 1
+                else:
+                    if not dev_client:
+                        unmatched_clients.append(client_mac)
+                    if not dev_uplink:
+                        unmatched_uplinks.append(uplink_mac)
 
             logger.info(
-                "auto_place: UniFi topology — %d LLDP edges, %d client uplinks",
+                "auto_place: UniFi topology — %d LLDP edges, %d client uplinks "
+                "(%d resolved, %d unmatched clients, %d unmatched uplinks)",
                 len(topo.get("lldp_edges", [])),
                 len(topo.get("client_uplinks", {})),
+                matched_uplinks,
+                len(unmatched_clients),
+                len(set(unmatched_uplinks)),
             )
+            if unmatched_clients:
+                logger.debug(
+                    "auto_place: unmatched client MACs (not in DB): %s",
+                    ", ".join(sorted(set(unmatched_clients))[:30]),
+                )
+            if unmatched_uplinks:
+                logger.debug(
+                    "auto_place: unmatched uplink MACs (AP/switch not in DB): %s",
+                    ", ".join(sorted(set(unmatched_uplinks))),
+                )
+            # Log DB MACs for cross-reference when there are mismatches
+            if unmatched_clients or unmatched_uplinks:
+                logger.debug(
+                    "auto_place: DB MACs available for lookup: %s",
+                    ", ".join(sorted(mac_to_dev.keys())[:50]),
+                )
         except Exception as exc:
             logger.warning("auto_place: UniFi topology fetch failed: %s", exc)
 
