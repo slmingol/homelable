@@ -106,20 +106,14 @@ async def _build_topology(
                 len(set(unmatched_uplinks)),
             )
             if unmatched_clients:
-                logger.debug(
+                logger.info(
                     "auto_place: unmatched client MACs (not in DB): %s",
                     ", ".join(sorted(set(unmatched_clients))[:30]),
                 )
             if unmatched_uplinks:
-                logger.debug(
+                logger.info(
                     "auto_place: unmatched uplink MACs (AP/switch not in DB): %s",
                     ", ".join(sorted(set(unmatched_uplinks))),
-                )
-            # Log DB MACs for cross-reference when there are mismatches
-            if unmatched_clients or unmatched_uplinks:
-                logger.debug(
-                    "auto_place: DB MACs available for lookup: %s",
-                    ", ".join(sorted(mac_to_dev.keys())[:50]),
                 )
         except Exception as exc:
             logger.warning("auto_place: UniFi topology fetch failed: %s", exc)
