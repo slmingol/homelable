@@ -241,8 +241,9 @@ async def run_auto_place(
             tier[dev.id] = max_tier + 1
 
     # Log tier assignments for infra devices to diagnose switch hierarchy
+    _dev_label = {dev.id: (dev.label or dev.hostname or dev.ip or dev.id) for dev in devices}
     infra_tiers = {
-        dev_label.get(dev.id, dev.id): tier[dev.id]
+        _dev_label.get(dev.id, dev.id): tier[dev.id]
         for dev in devices
         if (dev.type or dev.suggested_type or "").lower() in _INFRA_TYPES and dev.id in tier
     }
