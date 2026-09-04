@@ -46,6 +46,7 @@ async def _build_topology(
     # Build MAC / name lookup tables
     mac_to_dev: dict[str, str] = {}
     name_to_dev: dict[str, str] = {}
+    dev_label: dict[str, str] = {}
     for dev in devices:
         if dev.mac:
             mac_to_dev[dev.mac.lower()] = dev.id
@@ -53,6 +54,7 @@ async def _build_topology(
             name_to_dev[dev.hostname.lower()] = dev.id
         if dev.label:
             name_to_dev[dev.label.lower()] = dev.id
+        dev_label[dev.id] = dev.label or dev.hostname or dev.ip or dev.id
 
     adjacency: dict[str, set[str]] = {}
 
@@ -76,11 +78,15 @@ async def _build_topology(
                 verify_tls=s.unifi_verify_tls,
             )
             # Infrastructure LLDP links
+            resolved_lldp: list[str] = []
             for mac_a, mac_b in topo.get("lldp_edges", []):
                 dev_a = mac_to_dev.get(mac_a)
                 dev_b = mac_to_dev.get(mac_b)
                 if dev_a and dev_b:
                     _add_edge(dev_a, dev_b)
+                    resolved_lldp.append(f"{dev_label.get(dev_a, mac_a)} ↔ {dev_label.get(dev_b, mac_b)}")
+            if resolved_lldp:
+                logger.info("auto_place: resolved LLDP pairs:\n  %s", "\n  ".join(resolved_lldp))
 
             # Client -> AP/switch uplinks
             unmatched_clients: list[str] = []
@@ -233,6 +239,18 @@ async def run_auto_place(
     for dev in devices:
         if dev.id not in tier:
             tier[dev.id] = max_tier + 1
+
+    # Log tier assignments for infra devices to diagnose switch hierarchy
+    infra_tiers = {
+        dev_label.get(dev.id, dev.id): tier[dev.id]
+        for dev in devices
+        if (dev.type or dev.suggested_type or "").lower() in _INFRA_TYPES and dev.id in tier
+    }
+    if infra_tiers:
+        logger.info(
+            "auto_place: infra tier assignments: %s",
+            ", ".join(f"{n}=t{t}" for n, t in sorted(infra_tiers.items(), key=lambda x: x[1])),
+        )
 
     # --- 5. Compute positions ----------------------------------------------
     tiers: dict[int, list[str]] = {}
