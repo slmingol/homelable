@@ -79,14 +79,22 @@ async def _build_topology(
             )
             # Infrastructure LLDP links
             resolved_lldp: list[str] = []
+            unresolved_lldp: list[str] = []
             for mac_a, mac_b in topo.get("lldp_edges", []):
                 dev_a = mac_to_dev.get(mac_a)
                 dev_b = mac_to_dev.get(mac_b)
                 if dev_a and dev_b:
                     _add_edge(dev_a, dev_b)
                     resolved_lldp.append(f"{dev_label.get(dev_a, mac_a)} ↔ {dev_label.get(dev_b, mac_b)}")
+                else:
+                    unresolved_lldp.append(
+                        f"{mac_a}({'ok' if dev_a else 'NO'}) ↔ {mac_b}({'ok' if dev_b else 'NO'})"
+                    )
             if resolved_lldp:
                 logger.info("auto_place: resolved LLDP pairs:\n  %s", "\n  ".join(resolved_lldp))
+            if unresolved_lldp:
+                logger.info("auto_place: unresolved LLDP MACs (not in DB):\n  %s", "\n  ".join(unresolved_lldp))
+                logger.info("auto_place: DB MACs for lookup: %s", ", ".join(sorted(mac_to_dev.keys())))
 
             # Client -> AP/switch uplinks
             unmatched_clients: list[str] = []
