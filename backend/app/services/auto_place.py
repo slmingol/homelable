@@ -20,8 +20,10 @@ from app.services.unifi_service import fetch_unifi_topology
 
 logger = logging.getLogger(__name__)
 
-TIER_HEIGHT = 250
-NODE_WIDTH = 200
+TIER_HEIGHT = 300      # vertical gap between tiers
+NODE_WIDTH = 260       # horizontal slot per node (rendered width ~180px + padding)
+NODE_HEIGHT = 80       # vertical slot per node row within a wrapped tier
+MAX_PER_ROW = 12       # wrap tiers wider than this into a grid
 LLDP_TIMEOUT = 5.0
 
 # Tier-0 roots (highest in topology hierarchy)
@@ -238,12 +240,22 @@ async def run_auto_place(
         tiers.setdefault(t, []).append(dev_id)
 
     position: dict[str, tuple[float, float]] = {}
+    y_offset = 0.0
     for t_num, ids in sorted(tiers.items()):
-        y = t_num * TIER_HEIGHT
-        total_width = len(ids) * NODE_WIDTH
-        start_x = -total_width / 2
-        for i, dev_id in enumerate(ids):
-            position[dev_id] = (start_x + i * NODE_WIDTH, y)
+        # Only lay out approved device IDs (pending infra devices in tier from BFS
+        # traversal have no canvas node and should not influence slot counts).
+        approved_ids = [d for d in ids if d in {dev.id for dev in devices}]
+        if not approved_ids:
+            continue
+        rows = [approved_ids[i:i + MAX_PER_ROW] for i in range(0, len(approved_ids), MAX_PER_ROW)]
+        tier_y_start = y_offset
+        for row_idx, row in enumerate(rows):
+            y = tier_y_start + row_idx * NODE_HEIGHT
+            row_width = len(row) * NODE_WIDTH
+            start_x = -row_width / 2
+            for col_idx, dev_id in enumerate(row):
+                position[dev_id] = (start_x + col_idx * NODE_WIDTH, y)
+        y_offset = tier_y_start + len(rows) * NODE_HEIGHT + TIER_HEIGHT
 
     # --- 6. Create / reposition Node rows ----------------------------------
     nodes_placed = 0
@@ -259,7 +271,7 @@ async def run_auto_place(
     }
 
     for dev in devices:
-        x, y = position.get(dev.id, (0.0, float((max_tier + 2) * TIER_HEIGHT)))
+        x, y = position.get(dev.id, (0.0, y_offset))
         if dev.id in placed_device_ids:
             if force:
                 node = existing_node_obj[dev.id]
