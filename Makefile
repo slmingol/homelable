@@ -22,7 +22,7 @@ DIM    := \033[2m
         logs logs-backend logs-frontend logs-mcp \
         logs-unifi logs-opnsense logs-pfsense \
         ps shell-backend shell-mcp \
-        db-stats db-query sync-test approve-source snmp-enable clean
+        db-stats db-query sync-test approve-source snmp-enable auto-place clean
 
 # ── help ─────────────────────────────────────────────────────
 help:
@@ -52,6 +52,7 @@ help:
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "sync-test"     "Test all integration connections"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "approve-source" "Approve pending devices by source: make approve-source SOURCE=pfsense"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "snmp-enable"    "Enable SNMP on all approved devices (SNMP_ENABLED=false to disable)"
+	@printf "  $(RED)%-20s$(RESET)%s\n"   "auto-place"     "Run topology auto-place layout (FORCE=true to reposition, DESIGN_ID=<id>)"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "clean"         "Stop + remove volumes (DESTRUCTIVE)"
 	@printf "\n"
 
@@ -153,6 +154,12 @@ SNMP_ENABLED ?= true
 snmp-enable:
 	@printf "$(BOLD)$(CYAN)══ Setting SNMP enabled=$(SNMP_ENABLED) on all approved devices ──$(RESET)\n"
 	@$(COMPOSE) exec -T -e MCP_SERVICE_KEY backend python3 - $(SNMP_ENABLED) < $(SCRIPTS)/snmp_enable.py
+
+FORCE ?= false
+DESIGN_ID ?=
+auto-place:
+	@printf "$(BOLD)$(CYAN)══ Auto-place topology (FORCE=$(FORCE)) ────────────────────$(RESET)\n"
+	@FORCE=$(FORCE) DESIGN_ID=$(DESIGN_ID) $(COMPOSE) exec -T -e MCP_SERVICE_KEY -e FORCE -e DESIGN_ID backend python3 - < $(SCRIPTS)/auto_place.py
 
 clean:
 	@printf "$(BOLD)$(RED)══ Clean ────────────────────────────────────────────$(RESET)\n"
