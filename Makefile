@@ -22,7 +22,7 @@ DIM    := \033[2m
         logs logs-backend logs-frontend logs-mcp \
         logs-unifi logs-opnsense logs-pfsense \
         ps shell-backend shell-mcp \
-        db-stats db-query sync-test approve-source snmp-enable auto-place clean
+        db-stats db-query sync-test approve-source force-approve-infra snmp-enable auto-place clean
 
 # ── help ─────────────────────────────────────────────────────
 help:
@@ -51,6 +51,7 @@ help:
 	@printf "\n$(BOLD)  MAINTENANCE$(RESET)\n"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "sync-test"     "Test all integration connections"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "approve-source" "Approve pending devices by source: make approve-source SOURCE=pfsense"
+	@printf "  $(RED)%-20s$(RESET)%s\n"   "force-approve-infra" "Force-approve pending switch/AP/router devices (bypasses canvas check)"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "snmp-enable"    "Enable SNMP on all approved devices (SNMP_ENABLED=false to disable)"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "auto-place"     "Run topology auto-place layout (FORCE=true to reposition, DESIGN_ID=<id>)"
 	@printf "  $(RED)%-20s$(RESET)%s\n"   "clean"         "Stop + remove volumes (DESTRUCTIVE)"
@@ -149,6 +150,10 @@ SOURCE ?= pfsense
 approve-source:
 	@printf "$(BOLD)$(RED)══ Approving pending devices from '$(SOURCE)' ───────$(RESET)\n"
 	@$(COMPOSE) exec -T -e MCP_SERVICE_KEY backend python3 - $(SOURCE) < $(SCRIPTS)/approve_source.py
+
+force-approve-infra:
+	@printf "$(BOLD)$(RED)══ Force-approving pending infra devices ───────────────$(RESET)\n"
+	@$(COMPOSE) exec -T -e MCP_SERVICE_KEY backend python3 - < $(SCRIPTS)/force_approve_infra.py
 
 SNMP_ENABLED ?= true
 snmp-enable:
