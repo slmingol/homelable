@@ -379,6 +379,14 @@ async def run_auto_place(
     existing_edges: list[Edge] = (
         await db.execute(select(Edge).where(Edge.design_id == design_id))
     ).scalars().all()
+
+    # On force re-layout, wipe all existing edges and redraw only infra edges.
+    # This removes the old client→AP spider-web lines left from prior runs.
+    if force and existing_edges:
+        from sqlalchemy import delete as sa_delete
+        await db.execute(sa_delete(Edge).where(Edge.design_id == design_id))
+        existing_edges = []
+
     existing_edge_pairs: set[frozenset[str]] = {
         frozenset([e.source, e.target]) for e in existing_edges
     }
@@ -386,11 +394,23 @@ async def run_auto_place(
     edges_created = 0
     seen_pairs: set[frozenset[str]] = set()
 
+    # Only draw edges between infrastructure devices (switch↔switch, switch↔AP,
+    # router↔switch). Omitting client→AP/switch edges keeps the canvas readable;
+    # tier position already shows which tier a client belongs to.
+    dev_by_id: dict[str, InventoryDevice] = {d.id: d for d in devices}
+    infra_dev_ids: set[str] = {
+        d.id for d in devices if _dev_in_types(d, _INFRA_TYPES)
+    }
+
     for dev_id, neighbors in adjacency.items():
+        if dev_id not in infra_dev_ids:
+            continue
         src_node = all_node_by_dev.get(dev_id)
         if not src_node:
             continue
         for neighbor_id in neighbors:
+            if neighbor_id not in infra_dev_ids:
+                continue
             tgt_node = all_node_by_dev.get(neighbor_id)
             if not tgt_node:
                 continue
