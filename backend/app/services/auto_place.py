@@ -610,12 +610,21 @@ async def run_auto_place(
             if pair in existing_edge_pairs or pair in seen_pairs:
                 continue
             seen_pairs.add(pair)
+            src_y = position.get(dev_id, (0.0, 0.0))[1]
+            tgt_y = position.get(neighbor_id, (0.0, 0.0))[1]
+            # Y increases downward; source above target → exit bottom, enter top.
+            if src_y <= tgt_y:
+                src_handle, tgt_handle = "bottom", "top-t"
+            else:
+                src_handle, tgt_handle = "top", "bottom-t"
             db.add(Edge(
                 id=str(uuid.uuid4()),
                 source=src_node,
                 target=tgt_node,
                 design_id=design_id,
                 type="ethernet",
+                source_handle=src_handle,
+                target_handle=tgt_handle,
             ))
             edges_created += 1
 
