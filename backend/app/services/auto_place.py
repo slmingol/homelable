@@ -729,6 +729,50 @@ async def run_auto_place(
 
     all_node_by_dev = {**existing_node_by_dev, **new_node_by_dev}
 
+    # --- 6b. Create groupRect nodes for each client group ------------------
+    # Delete old auto-placed groupRects (type='groupRect', no device_id) so
+    # force re-layout and incremental placement both produce fresh rects.
+    _GROUP_RECT_PADDING = 30
+    from sqlalchemy import delete as _sa_del
+    await db.execute(
+        _sa_del(Node).where(
+            Node.design_id == design_id,
+            Node.type == "groupRect",
+            Node.device_id.is_(None),
+        )
+    )
+    await db.flush()
+
+    # Build reverse map: parent infra id → [client device ids]
+    _parent_clients: dict[str | None, list[str]] = {}
+    for _cid, _pid in client_parent.items():
+        _parent_clients.setdefault(_pid, []).append(_cid)
+
+    for _pid, _cids in _parent_clients.items():
+        _cid_positions = [(c, position[c]) for c in _cids if c in position]
+        if not _cid_positions:
+            continue
+        _xs = [p[0] for _, p in _cid_positions]
+        _ys = [p[1] for _, p in _cid_positions]
+        _rect_x = min(_xs) - _GROUP_RECT_PADDING
+        _rect_y = min(_ys) - _GROUP_RECT_PADDING
+        _rect_w = max(_xs) - min(_xs) + CLIENT_NODE_WIDTH + 2 * _GROUP_RECT_PADDING
+        _rect_h = max(_ys) - min(_ys) + CLIENT_NODE_HEIGHT + 2 * _GROUP_RECT_PADDING
+        _rect_label = _dev_label.get(_pid, "Unassigned") if _pid else "Unassigned"
+        db.add(Node(
+            id=str(uuid.uuid4()),
+            type="groupRect",
+            label=_rect_label,
+            design_id=design_id,
+            device_id=None,
+            pos_x=_rect_x,
+            pos_y=_rect_y,
+            width=_rect_w,
+            height=_rect_h,
+        ))
+
+    await db.flush()
+
     # --- 7. Create Edge rows for topology pairs ----------------------------
     existing_edges: list[Edge] = (
         await db.execute(select(Edge).where(Edge.design_id == design_id))
@@ -808,6 +852,34 @@ async def run_auto_place(
             target=tgt_node,
             design_id=design_id,
             type="virtual",
+            source_handle="bottom",
+            target_handle="top-t",
+        ))
+        edges_created += 1
+
+    # Draw dashed edges from each client to its infra parent.
+    # Thin dashed lines keep the canvas readable while making the connection explicit.
+    for _client_dev, _parent_dev in client_parent.items():
+        if not _parent_dev:
+            continue
+        if _client_dev not in approved_set_ids or _parent_dev not in approved_set_ids:
+            continue
+        _src_node = all_node_by_dev.get(_parent_dev)
+        _tgt_node = all_node_by_dev.get(_client_dev)
+        if not _src_node or not _tgt_node:
+            continue
+        _pair = frozenset([_src_node, _tgt_node])
+        if _pair in existing_edge_pairs or _pair in seen_pairs:
+            continue
+        seen_pairs.add(_pair)
+        db.add(Edge(
+            id=str(uuid.uuid4()),
+            source=_src_node,
+            target=_tgt_node,
+            design_id=design_id,
+            type="ethernet",
+            line_style="dashed",
+            width_mult=0.5,
             source_handle="bottom",
             target_handle="top-t",
         ))
