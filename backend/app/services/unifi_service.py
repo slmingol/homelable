@@ -162,16 +162,12 @@ async def fetch_unifi_topology(
                 ).lower()
                 if dev_mac and neighbor_mac and dev_mac != neighbor_mac:
                     lldp_edges.append((dev_mac, neighbor_mac))
-            # Uplink field — present on switches/APs managed by UniFi
+            # Uplink field — present on switches/APs managed by UniFi.
+            # The uplink dict uses "mac" for the upstream device MAC (not "uplink_mac").
             uplink = device.get("uplink") or {}
-            uplink_mac = (uplink.get("uplink_mac") or "").lower()
+            uplink_mac = (uplink.get("mac") or uplink.get("uplink_mac") or "").lower()
             if dev_mac and uplink_mac and uplink_mac != dev_mac:
                 device_uplinks[dev_mac] = uplink_mac
-            elif dev_mac and uplink and not uplink_mac:
-                logger.info(
-                    "unifi_topology: device %s uplink keys=%s",
-                    name, list(uplink.keys())[:10],
-                )
 
         client_uplinks: dict[str, str] = {}
         for sta in clients:

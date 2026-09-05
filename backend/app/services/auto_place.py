@@ -291,8 +291,9 @@ async def run_auto_place(
     }
     if infra_tiers:
         logger.info(
-            "auto_place: infra tier assignments: %s",
-            ", ".join(f"{n}=t{t}" for n, t in sorted(infra_tiers.items(), key=lambda x: x[1])),
+            "auto_place: infra tier assignments (%d devices):\n  %s",
+            len(infra_tiers),
+            "\n  ".join(f"{n}=t{t}" for n, t in sorted(infra_tiers.items(), key=lambda x: x[1])),
         )
 
     # --- 5. Compute positions ----------------------------------------------
