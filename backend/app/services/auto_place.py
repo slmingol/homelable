@@ -33,6 +33,18 @@ _ROOT_TYPES = {"router", "gateway", "firewall"}
 _INFRA_TYPES = {"router", "gateway", "firewall", "switch", "ap"}
 
 
+def _dev_in_types(dev: "InventoryDevice", types: set[str]) -> bool:
+    """True if the device's type OR suggested_type is in types.
+
+    Checks both fields so that devices where a generic IP scan set type='server'
+    but the UniFi sync set suggested_type='switch' are still recognized.
+    """
+    return (
+        (dev.type or "").lower() in types
+        or (dev.suggested_type or "").lower() in types
+    )
+
+
 async def _build_topology(
     devices: list[InventoryDevice],
 ) -> dict[str, set[str]]:
@@ -138,7 +150,7 @@ async def _build_topology(
             # so BFS can traverse the full switch hierarchy.
             root_macs: set[str] = {
                 dev.mac.lower() for dev in devices
-                if dev.mac and (dev.type or dev.suggested_type or "").lower() in _ROOT_TYPES
+                if dev.mac and _dev_in_types(dev, _ROOT_TYPES)
             }
             core_switches: list[str] = []
             for dev_mac, uplink_mac in topo.get("device_uplinks", {}).items():
@@ -172,7 +184,7 @@ async def _build_topology(
     snmp_infra = [
         d for d in devices
         if d.snmp_enabled and d.ip
-        and (d.type or d.suggested_type or "").lower() in _INFRA_TYPES
+        and _dev_in_types(d, _INFRA_TYPES)
     ]
 
     async def _walk(dev: InventoryDevice) -> tuple[str, list[dict[str, Any]]]:
@@ -259,7 +271,7 @@ async def run_auto_place(
     # --- 4. BFS tier layout from root devices ------------------------------
     roots: list[str] = [
         d.id for d in devices
-        if (d.type or d.suggested_type or "").lower() in _ROOT_TYPES
+        if _dev_in_types(d, _ROOT_TYPES)
     ]
 
     if not roots:
@@ -287,7 +299,7 @@ async def run_auto_place(
     infra_tiers = {
         _dev_label.get(dev.id, dev.id): tier[dev.id]
         for dev in devices
-        if (dev.type or dev.suggested_type or "").lower() in _INFRA_TYPES and dev.id in tier
+        if _dev_in_types(dev, _INFRA_TYPES) and dev.id in tier
     }
     if infra_tiers:
         logger.info(

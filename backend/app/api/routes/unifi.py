@@ -203,7 +203,9 @@ async def _persist_devices(
             existing.suggested_type = dev.get("type") or existing.suggested_type
             existing.vendor = dev.get("vendor") or existing.vendor
             existing.model = dev.get("model") or existing.model
-            if existing.status == "approved":
+            # Status preserved — an approved device stays approved.
+            # Only reset hidden devices (they came back visible in UniFi).
+            if existing.status == "hidden":
                 existing.status = "pending"
             pending_updated += 1
 
