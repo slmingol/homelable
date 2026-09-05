@@ -226,8 +226,8 @@ class Settings(BaseSettings):
     pfsense_sync_enabled: bool = False
     pfsense_sync_interval: int = 3600
 
-    # XCP-ng / XenServer XAPI import. Credentials are secrets → env/.env ONLY.
-    # XCPNG_HOST=xcpng-hv-01  XCPNG_USERNAME=...  XCPNG_PASSWORD=...
+    # XCP-ng inventory via Xen Orchestra (XO) JSON-RPC API. Credentials → env only.
+    # XCPNG_HOST=xcpng-xo-01.bub.lan  XCPNG_USERNAME=xoa_...@...  XCPNG_PASSWORD=...
     xcpng_host: str = ""
     xcpng_username: str = ""
     xcpng_password: str = ""

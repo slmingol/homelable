@@ -1,21 +1,19 @@
-"""XCP-ng / XenServer inventory service: fetch hosts + VMs via the XAPI XML-RPC interface.
+"""XCP-ng inventory via Xen Orchestra (XO) JSON-RPC HTTP API.
 
-Talks to the XAPI endpoint (https://<host>/) using standard Python xmlrpc.client.
-Authentication: session.login_with_password (username + password).
-All blocking calls are wrapped in asyncio.to_thread so the async FastAPI event loop
-is never blocked.
+Connects to the XO server (xcpng-xo-01 / xcpng-xo-02) at ``/api/`` using the
+JSON-RPC 2.0 protocol over HTTPS. Authentication is session-based (cookie);
+credentials are the XO email + password (xoa_homelable@...).
 
-XAPI response envelope: {'Status': 'Success'|'Failure', 'Value': ..., 'ErrorDescription': [...]}
+This avoids direct XAPI XML-RPC (which requires root or AD subjects) in favour
+of XO's own service account support.
 """
 
 from __future__ import annotations
 
-import asyncio
-import http.client
 import logging
-import ssl
-import xmlrpc.client
 from typing import Any
+
+import httpx
 
 from app.services.mac_utils import normalize_mac
 from app.services.zigbee_service import merge_zigbee_properties
@@ -26,40 +24,9 @@ merge_xcpng_properties = merge_zigbee_properties
 
 _CONNECT_TIMEOUT = 10.0
 _READ_TIMEOUT = 30.0
-_NULL_REF = "OpaqueRef:NULL"
 _BYTES_PER_GB = 1024 ** 3
 
-
-class _TimeoutSafeTransport(xmlrpc.client.SafeTransport):
-    """SafeTransport with a per-connection timeout."""
-
-    def __init__(self, timeout: float, context: ssl.SSLContext) -> None:
-        super().__init__(context=context)
-        self._timeout = timeout
-
-    def make_connection(self, host: Any) -> http.client.HTTPSConnection:
-        conn = super().make_connection(host)
-        conn.timeout = self._timeout
-        return conn
-
-
-def _make_proxy(host: str, verify_tls: bool) -> xmlrpc.client.ServerProxy:
-    ctx = ssl.create_default_context()
-    if not verify_tls:
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-    transport = _TimeoutSafeTransport(timeout=_READ_TIMEOUT, context=ctx)
-    return xmlrpc.client.ServerProxy(f"https://{host}/", transport=transport)
-
-
-def _xapi(result: Any, method: str) -> Any:
-    """Unwrap an XAPI response dict; raise on Failure."""
-    if not isinstance(result, dict):
-        raise ValueError(f"XAPI {method}: unexpected response type {type(result)}")
-    if result.get("Status") != "Success":
-        err = result.get("ErrorDescription", ["unknown error"])
-        raise ConnectionError(f"XAPI {method} failed: {err}")
-    return result["Value"]
+_RPC_ID = 1  # stateless, single-request id is fine
 
 
 def _gb(value: Any) -> float | None:
@@ -80,30 +47,71 @@ def _int_or_none(value: Any) -> int | None:
 
 
 def _sanitize_error(exc: BaseException) -> str:
-    logger.warning("XCP-ng XAPI error (sanitized): %r", exc)
+    logger.warning("XO API error (sanitized): %r", exc)
     raw = str(exc).lower()
-    if "session_authentication_failed" in raw or "unauthorized" in raw:
+    if "unauthorized" in raw or "authentication" in raw or "invalid credentials" in raw:
         return "Authentication failed — check XCPNG_USERNAME and XCPNG_PASSWORD"
     if "certificate" in raw or "ssl" in raw or "tls" in raw:
         return "TLS verification failed — set XCPNG_VERIFY_TLS=false for self-signed certs"
     if "timed out" in raw or "timeout" in raw:
-        return "Connection to XCP-ng host timed out"
+        return "Connection to XO server timed out"
     if "refused" in raw:
-        return "Connection refused by XCP-ng host"
+        return "Connection refused by XO server"
     if "nodename nor servname" in raw or "getaddrinfo" in raw or "name or service not known" in raw:
-        return "XCP-ng host could not be resolved"
-    if "errorcode" in raw and "session" in raw:
+        return "XO host could not be resolved"
+    if "invalid_credentials" in raw or "incorrect" in raw:
         return "Authentication failed — check XCPNG_USERNAME and XCPNG_PASSWORD"
-    return f"XCP-ng XAPI connection failed: {type(exc).__name__}"
+    return f"XO API connection failed: {type(exc).__name__}"
 
 
-def _host_node(uuid: str, rec: dict[str, Any]) -> dict[str, Any] | None:
-    name = rec.get("name_label") or rec.get("hostname") or uuid
-    cpu_info = rec.get("cpu_info") or {}
-    try:
-        cpu_count = int(cpu_info.get("cpu_count") or 0) or None
-    except (TypeError, ValueError):
-        cpu_count = None
+def _make_client(host: str, verify_tls: bool) -> httpx.AsyncClient:
+    timeout = httpx.Timeout(_READ_TIMEOUT, connect=_CONNECT_TIMEOUT)
+    return httpx.AsyncClient(
+        base_url=f"https://{host}",
+        verify=verify_tls,
+        timeout=timeout,
+        follow_redirects=True,
+    )
+
+
+async def _rpc(
+    client: httpx.AsyncClient,
+    method: str,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    """Send one JSON-RPC 2.0 call; raise ConnectionError on RPC-level errors."""
+    payload = {"jsonrpc": "2.0", "id": _RPC_ID, "method": method, "params": params or {}}
+    resp = await client.post("/api/", json=payload)
+    resp.raise_for_status()
+    data = resp.json()
+    if "error" in data:
+        err = data["error"]
+        code = err.get("code") if isinstance(err, dict) else None
+        msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+        if code in (1, -32000) or "credential" in msg.lower() or "authentication" in msg.lower():
+            raise ConnectionError("Authentication failed — check XCPNG_USERNAME and XCPNG_PASSWORD")
+        raise ConnectionError(f"XO RPC {method} error: {msg}")
+    return data.get("result")
+
+
+async def _sign_in(client: httpx.AsyncClient, username: str, password: str) -> None:
+    """Establish a session; raises ConnectionError on auth failure."""
+    await _rpc(client, "session.signIn", {"email": username, "password": password})
+
+
+async def _get_objects(client: httpx.AsyncClient, obj_type: str) -> dict[str, dict[str, Any]]:
+    """Fetch all XO objects of a given type. Returns {id: record}."""
+    result = await _rpc(client, "xo.getAllObjects", {"filter": {"type": obj_type}})
+    if isinstance(result, dict):
+        return result
+    return {}
+
+
+def _host_node(xo_id: str, rec: dict[str, Any]) -> dict[str, Any] | None:
+    uuid = rec.get("uuid") or xo_id
+    name = rec.get("name_label") or uuid
+    mem = rec.get("memory") or {}
+    cpus = rec.get("cpus") or {}
     return {
         "id": f"xcpng-host-{uuid}",
         "label": name,
@@ -112,23 +120,27 @@ def _host_node(uuid: str, rec: dict[str, Any]) -> dict[str, Any] | None:
         "hostname": name,
         "ip": rec.get("address") or None,
         "status": "online",
-        "cpu_count": cpu_count,
-        "ram_gb": _gb(rec.get("memory_total")),
+        "cpu_count": _int_or_none(cpus.get("cores")),
+        "ram_gb": _gb(mem.get("size")),
         "disk_gb": None,
         "vendor": "XCP-ng",
-        "model": rec.get("software_version", {}).get("product_version") or "Hypervisor",
+        "model": rec.get("version") or "Hypervisor",
         "parent_ieee": None,
+        "_xo_id": xo_id,
     }
 
 
 def _vm_node(
-    uuid: str,
+    xo_id: str,
     rec: dict[str, Any],
     host_ieee: str | None,
     mac: str | None,
 ) -> dict[str, Any] | None:
+    uuid = rec.get("uuid") or xo_id
     name = rec.get("name_label") or f"vm-{uuid}"
     power = rec.get("power_state", "Halted")
+    mem = rec.get("memory") or {}
+    cpus = rec.get("CPUs") or {}
     return {
         "id": f"xcpng-vm-{uuid}",
         "label": name,
@@ -138,8 +150,8 @@ def _vm_node(
         "ip": None,
         "mac": mac,
         "status": "online" if power == "Running" else "offline",
-        "cpu_count": _int_or_none(rec.get("VCPUs_max")),
-        "ram_gb": _gb(rec.get("memory_static_max")),
+        "cpu_count": _int_or_none(cpus.get("number") or cpus.get("max")),
+        "ram_gb": _gb(mem.get("size")),
         "disk_gb": None,
         "vendor": "XCP-ng",
         "model": "VM",
@@ -157,43 +169,42 @@ def _parse_inventory(
     edges: list[dict[str, Any]] = []
     seen: set[str] = set()
 
-    # Build host uuid → ieee map
+    # XO id → ieee map for hosts
     host_ieee: dict[str, str] = {}
-    for ref, rec in hosts_raw.items():
-        uuid = rec.get("uuid")
-        if not uuid:
-            continue
-        node = _host_node(uuid, rec)
+    for xo_id, rec in hosts_raw.items():
+        node = _host_node(xo_id, rec)
         if node and node["id"] not in seen:
             seen.add(node["id"])
-            nodes.append(node)
-            host_ieee[ref] = node["ieee_address"]
+            host_ieee[xo_id] = node["ieee_address"]
+            # Strip internal key before appending
+            nodes.append({k: v for k, v in node.items() if k != "_xo_id"})
 
-    # Build vm_ref → first MAC from VIFs
+    # XO VM id → first MAC from VIFs
     vm_mac: dict[str, str | None] = {}
     for _ref, vif in vifs_raw.items():
-        vm_ref = vif.get("VM")
+        vm_ref = vif.get("$VM") or vif.get("VM")
         if not vm_ref or vm_ref in vm_mac:
             continue
         raw_mac = vif.get("MAC") or ""
         vm_mac[vm_ref] = normalize_mac(raw_mac) if raw_mac else None
 
-    # Build VMs
-    for ref, rec in vms_raw.items():
-        if rec.get("is_a_template") or rec.get("is_control_domain"):
+    # Filter and build VMs
+    for xo_id, rec in vms_raw.items():
+        if rec.get("is_template"):
             continue
-        uuid = rec.get("uuid")
-        if not uuid:
+        # XO uses type="VM" for real VMs, "VM-template" for templates
+        if rec.get("type", "VM") != "VM":
             continue
 
-        resident = rec.get("resident_on") or _NULL_REF
-        parent_ieee = host_ieee.get(resident) if resident != _NULL_REF else None
+        uuid = rec.get("uuid") or xo_id
+        # $container is the host XO ID for running VMs; may be absent when halted
+        container = rec.get("$container") or rec.get("resident_on") or ""
+        parent_ieee = host_ieee.get(container) if container else None
         if parent_ieee is None and len(host_ieee) == 1:
-            # Single-host setup — affinity to the only host regardless of power state
             parent_ieee = next(iter(host_ieee.values()))
 
-        mac = vm_mac.get(ref)
-        node = _vm_node(uuid, rec, parent_ieee, mac)
+        mac = vm_mac.get(xo_id)
+        node = _vm_node(xo_id, rec, parent_ieee, mac)
         if node and node["id"] not in seen:
             seen.add(node["id"])
             nodes.append(node)
@@ -203,79 +214,34 @@ def _parse_inventory(
     return nodes, edges
 
 
-def _fetch_inventory_sync(
-    host: str,
-    username: str,
-    password: str,
-    verify_tls: bool,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    proxy = _make_proxy(host, verify_tls)
-    session = _xapi(
-        proxy.session.login_with_password(username, password, "1.3", "homelable"),
-        "session.login_with_password",
-    )
-    try:
-        hosts_raw = _xapi(proxy.host.get_all_records(session), "host.get_all_records")
-        vms_raw = _xapi(proxy.VM.get_all_records(session), "VM.get_all_records")
-        vifs_raw = _xapi(proxy.VIF.get_all_records(session), "VIF.get_all_records")
-    finally:
-        try:
-            proxy.session.logout(session)
-        except Exception:
-            pass
-    return _parse_inventory(hosts_raw, vms_raw, vifs_raw)
-
-
-def _test_connection_sync(
-    host: str,
-    username: str,
-    password: str,
-    verify_tls: bool,
-) -> tuple[bool, str]:
-    proxy = _make_proxy(host, verify_tls)
-    try:
-        session = _xapi(
-            proxy.session.login_with_password(username, password, "1.3", "homelable"),
-            "session.login_with_password",
-        )
-        try:
-            result = proxy.host.get_all_records(session)
-            hosts = _xapi(result, "host.get_all_records")
-            n_hosts = len(hosts) if isinstance(hosts, dict) else 0
-            result = proxy.VM.get_all_records(session)
-            vms_all = _xapi(result, "VM.get_all_records")
-            n_vms = sum(
-                1 for rec in (vms_all or {}).values()
-                if not rec.get("is_a_template") and not rec.get("is_control_domain")
-            )
-        finally:
-            try:
-                proxy.session.logout(session)
-            except Exception:
-                pass
-        return True, f"Connected to XCP-ng — {n_hosts} host(s), {n_vms} VM(s)"
-    except ConnectionError as exc:
-        return False, str(exc)
-    except Exception as exc:
-        return False, _sanitize_error(exc)
-
-
 async def fetch_xcpng_inventory(
     host: str,
     username: str,
     password: str,
     verify_tls: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Fetch hosts + VMs from XCP-ng via XAPI. Returns (nodes, edges).
+    """Fetch hosts + VMs from XO. Returns (nodes, edges).
 
     Raises:
-        ConnectionError: transport / auth / XAPI failures (sanitized message).
+        ConnectionError: transport / auth / API failures (sanitized).
         ValueError: malformed response.
     """
     try:
-        return await asyncio.to_thread(_fetch_inventory_sync, host, username, password, verify_tls)
+        async with _make_client(host, verify_tls) as client:
+            await _sign_in(client, username, password)
+            hosts_raw = await _get_objects(client, "host")
+            vms_raw = await _get_objects(client, "VM")
+            vifs_raw = await _get_objects(client, "VIF")
+        return _parse_inventory(hosts_raw, vms_raw, vifs_raw)
     except ConnectionError:
         raise
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        if code in (401, 403):
+            raise ConnectionError("Authentication failed — check XCPNG_USERNAME and XCPNG_PASSWORD") from exc
+        raise ConnectionError(f"XO server returned HTTP {code}") from exc
+    except httpx.HTTPError as exc:
+        raise ConnectionError(_sanitize_error(exc)) from exc
     except Exception as exc:
         raise ConnectionError(_sanitize_error(exc)) from exc
 
@@ -288,7 +254,17 @@ async def test_xcpng_connection(
 ) -> tuple[bool, str]:
     """Reachability + auth check. Returns (connected, message). Never raises credentials outward."""
     try:
-        return await asyncio.to_thread(_test_connection_sync, host, username, password, verify_tls)
+        async with _make_client(host, verify_tls) as client:
+            await _sign_in(client, username, password)
+            hosts = await _get_objects(client, "host")
+            vms_all = await _get_objects(client, "VM")
+            n_vms = sum(
+                1 for rec in vms_all.values()
+                if not rec.get("is_template") and rec.get("type", "VM") == "VM"
+            )
+        return True, f"Connected to XO — {len(hosts)} host(s), {n_vms} VM(s)"
+    except ConnectionError as exc:
+        return False, str(exc)
     except Exception as exc:
         return False, _sanitize_error(exc)
 
@@ -304,5 +280,5 @@ def build_xcpng_properties(node: dict[str, Any]) -> list[dict[str, Any]]:
         props.append({"key": "CPU Cores", "value": str(node["cpu_count"]), "icon": "Cpu", "visible": False})
     if node.get("ram_gb") is not None:
         props.append({"key": "RAM", "value": f"{node['ram_gb']} GB", "icon": "MemoryStick", "visible": False})
-    props.append({"key": "Source", "value": "XCP-ng", "icon": None, "visible": False})
+    props.append({"key": "Source", "value": "XCP-ng / XO", "icon": None, "visible": False})
     return props
