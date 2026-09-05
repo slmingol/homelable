@@ -20,10 +20,12 @@ from app.services.unifi_service import fetch_unifi_topology
 
 logger = logging.getLogger(__name__)
 
-TIER_HEIGHT = 300      # vertical gap between tiers
-NODE_WIDTH = 260       # horizontal slot per node (rendered width ~180px + padding)
-NODE_HEIGHT = 80       # vertical slot per node row within a wrapped tier
-MAX_PER_ROW = 12       # wrap tiers wider than this into a grid
+INFRA_NODE_WIDTH = 320    # horizontal slot for infra devices
+INFRA_TIER_HEIGHT = 280   # vertical gap between infra tiers
+CLIENT_NODE_WIDTH = 220   # horizontal slot for client/non-infra devices
+CLIENT_NODE_HEIGHT = 70   # vertical slot per client row
+CLIENT_TIER_HEIGHT = 350  # vertical gap from last infra tier to client area
+CLIENT_MAX_PER_ROW = 10   # clients per row in the flat client area
 LLDP_TIMEOUT = 5.0
 
 # Tier-0 roots (highest in topology hierarchy)
@@ -348,28 +350,139 @@ async def run_auto_place(
             "\n  ".join(f"{n}=t{t}" for n, t in sorted(infra_tiers.items(), key=lambda x: x[1])),
         )
 
-    # --- 5. Compute positions ----------------------------------------------
-    tiers: dict[int, list[str]] = {}
-    for dev_id, t in tier.items():
-        tiers.setdefault(t, []).append(dev_id)
+    # --- 5. Compute positions (two-phase) ------------------------------------
+    # Phase 1: place infra devices in a clean BFS tree using infra-only edges.
+    # Phase 2: place all other (client) devices below, sorted by their infra
+    # parent so clients of the same switch/AP appear adjacent.
+
+    approved_set: set[str] = {d.id for d in devices}
+    infra_ids: set[str] = {d.id for d in devices if _dev_in_types(d, _INFRA_TYPES)}
+
+    # Infra-only adjacency — both endpoints must be infra devices
+    infra_adj: dict[str, set[str]] = {
+        k: {v for v in vs if v in infra_ids}
+        for k, vs in adjacency.items()
+        if k in infra_ids
+    }
+
+    # BFS from infra roots through infra-only edges
+    infra_root_ids = [r for r in roots if r in infra_ids]
+    if not infra_root_ids and infra_ids:
+        # roots may be firewall/router type not in approved_set — find adjacent infra
+        for r in roots:
+            for nbr in adjacency.get(r, set()):
+                if nbr in infra_ids:
+                    infra_root_ids = [nbr]
+                    break
+            if infra_root_ids:
+                break
+        if not infra_root_ids:
+            infra_root_ids = [next(iter(infra_ids))]
+
+    infra_tier_map: dict[str, int] = {r: 0 for r in infra_root_ids}
+    infra_bfs_parent: dict[str, str] = {}
+    infra_queue = list(infra_root_ids)
+    while infra_queue:
+        cur = infra_queue.pop(0)
+        for nbr in infra_adj.get(cur, set()):
+            if nbr not in infra_tier_map:
+                infra_tier_map[nbr] = infra_tier_map[cur] + 1
+                infra_bfs_parent[nbr] = cur
+                infra_queue.append(nbr)
+
+    max_infra_tier = max(infra_tier_map.values(), default=0)
+    for dev_id in infra_ids:
+        if dev_id in approved_set and dev_id not in infra_tier_map:
+            infra_tier_map[dev_id] = max_infra_tier + 1
+
+    # Build tier groups (approved infra devices only), ordered by DFS traversal
+    # of the infra tree so edges between tiers don't cross.
+    def _dfs_infra(root_ids: list[str]) -> list[str]:
+        order: list[str] = []
+        visited: set[str] = set()
+        stack = list(reversed(root_ids))
+        while stack:
+            node = stack.pop()
+            if node in visited:
+                continue
+            visited.add(node)
+            order.append(node)
+            children = sorted(
+                [n for n in infra_adj.get(node, set())
+                 if infra_tier_map.get(n, -1) == infra_tier_map.get(node, -2) + 1],
+                key=lambda x: x,
+            )
+            stack.extend(reversed(children))
+        return order
+
+    dfs_ordered = _dfs_infra(infra_root_ids)
+    dfs_index = {dev_id: i for i, dev_id in enumerate(dfs_ordered)}
+
+    infra_tiers_grouped: dict[int, list[str]] = {}
+    for dev_id, t in infra_tier_map.items():
+        if dev_id in approved_set:
+            infra_tiers_grouped.setdefault(t, []).append(dev_id)
+    for t_num in infra_tiers_grouped:
+        infra_tiers_grouped[t_num].sort(key=lambda d: dfs_index.get(d, 999))
 
     position: dict[str, tuple[float, float]] = {}
     y_offset = 0.0
-    for t_num, ids in sorted(tiers.items()):
-        # Only lay out approved device IDs (pending infra devices in tier from BFS
-        # traversal have no canvas node and should not influence slot counts).
-        approved_ids = [d for d in ids if d in {dev.id for dev in devices}]
-        if not approved_ids:
+    for t_num, ids in sorted(infra_tiers_grouped.items()):
+        row_width = len(ids) * INFRA_NODE_WIDTH
+        start_x = -row_width / 2
+        for col_idx, dev_id in enumerate(ids):
+            position[dev_id] = (start_x + col_idx * INFRA_NODE_WIDTH, y_offset)
+        y_offset += INFRA_TIER_HEIGHT
+
+    infra_y_bottom = y_offset  # top of client area
+
+    # Phase 2: client (non-infra) devices — sorted by parent infra device so
+    # clients of the same switch/AP appear together in the client area.
+    client_parent_infra: dict[str, str | None] = {}
+    for dev in devices:
+        if dev.id in infra_ids:
             continue
-        rows = [approved_ids[i:i + MAX_PER_ROW] for i in range(0, len(approved_ids), MAX_PER_ROW)]
-        tier_y_start = y_offset
-        for row_idx, row in enumerate(rows):
-            y = tier_y_start + row_idx * NODE_HEIGHT
-            row_width = len(row) * NODE_WIDTH
-            start_x = -row_width / 2
-            for col_idx, dev_id in enumerate(row):
-                position[dev_id] = (start_x + col_idx * NODE_WIDTH, y)
-        y_offset = tier_y_start + len(rows) * NODE_HEIGHT + TIER_HEIGHT
+        parent = None
+        for nbr_id in adjacency.get(dev.id, set()):
+            if nbr_id in infra_ids and nbr_id in position:
+                parent = nbr_id
+                break
+        client_parent_infra[dev.id] = parent
+
+    # Group then sort: parents ordered by their x position (left → right)
+    parent_clients: dict[str, list[str]] = {}
+    orphan_clients: list[str] = []
+    for dev in devices:
+        if dev.id in infra_ids:
+            continue
+        p = client_parent_infra.get(dev.id)
+        if p:
+            parent_clients.setdefault(p, []).append(dev.id)
+        else:
+            orphan_clients.append(dev.id)
+
+    sorted_parents = sorted(
+        parent_clients.keys(),
+        key=lambda pid: position.get(pid, (0.0, 0.0))[0],
+    )
+    all_clients_ordered: list[str] = []
+    for pid in sorted_parents:
+        all_clients_ordered.extend(parent_clients[pid])
+    all_clients_ordered.extend(orphan_clients)
+
+    client_y_start = infra_y_bottom + CLIENT_TIER_HEIGHT
+    if all_clients_ordered:
+        total_width = min(len(all_clients_ordered), CLIENT_MAX_PER_ROW) * CLIENT_NODE_WIDTH
+        cl_start_x = -total_width / 2
+        for i, client_id in enumerate(all_clients_ordered):
+            col = i % CLIENT_MAX_PER_ROW
+            row = i // CLIENT_MAX_PER_ROW
+            position[client_id] = (
+                cl_start_x + col * CLIENT_NODE_WIDTH,
+                client_y_start + row * CLIENT_NODE_HEIGHT,
+            )
+
+    fallback_y = client_y_start
 
     # --- 6. Create / reposition Node rows ----------------------------------
     nodes_placed = 0
@@ -385,7 +498,7 @@ async def run_auto_place(
     }
 
     for dev in devices:
-        x, y = position.get(dev.id, (0.0, y_offset))
+        x, y = position.get(dev.id, (0.0, fallback_y))
         if dev.id in placed_device_ids:
             if force:
                 node = existing_node_obj[dev.id]
