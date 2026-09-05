@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings as app_settings
-from app.db.models import Edge, InventoryDevice, Node
+from app.db.models import Edge, InventoryDevice, InventoryDeviceLink, Node
 from app.services.lldp import discover_neighbors
 from app.services.unifi_service import fetch_unifi_topology
 
@@ -37,6 +37,13 @@ _ROOT_TYPES = {"router", "gateway", "firewall"}
 
 # Only walk SNMP/LLDP on infrastructure devices — end devices don't run SNMP
 _INFRA_TYPES = {"router", "gateway", "firewall", "switch", "ap"}
+
+# Hypervisors sit between the switch tier and the client band; their VMs are
+# their "clients".  Not in _INFRA_TYPES so SNMP walks skip them.
+_VIRTUAL_INFRA_TYPES = {"xcpng", "proxmox", "docker_host"}
+
+# InventoryDeviceLink discovery_source values that encode hypervisor→VM edges
+_VIRTUAL_LINK_SOURCES = {"xcpng_virtual", "proxmox_virtual"}
 
 
 def _dev_in_types(dev: "InventoryDevice", types: set[str]) -> bool:
@@ -446,6 +453,54 @@ async def run_auto_place(
     # Pass all non-hidden devices for MAC resolution; placement uses approved only.
     adjacency, stp_by_dev, confirmed_infra_ids = await _build_topology(all_devices)
 
+    # Inject xcpng_virtual / proxmox_virtual host→VM edges from InventoryDeviceLink.
+    # UniFi sees the VM's MAC on the hypervisor's switch port (LLDP bleed-through),
+    # so it wires the VM directly to the switch.  We correct this by:
+    #   1. Adding hypervisor ↔ VM to adjacency
+    #   2. Inferring hypervisor ↔ switch from the VM's UniFi-reported switch parent
+    #   3. Removing the spurious VM ↔ switch edge so VMs group under their hypervisor
+    ieee_to_dev_id: dict[str, str] = {
+        dev.ieee_address: dev.id for dev in all_devices if dev.ieee_address
+    }
+    virtual_links = (await db.execute(
+        select(InventoryDeviceLink).where(
+            InventoryDeviceLink.discovery_source.in_(list(_VIRTUAL_LINK_SOURCES))
+        )
+    )).scalars().all()
+
+    # vm_dev_id → host_dev_id (for use in client_parent and edge drawing)
+    virt_host_of: dict[str, str] = {}
+    for link in virtual_links:
+        host_id = ieee_to_dev_id.get(link.source_ieee)
+        vm_id = ieee_to_dev_id.get(link.target_ieee)
+        if not host_id or not vm_id:
+            continue
+        virt_host_of[vm_id] = host_id
+        adjacency.setdefault(host_id, set()).add(vm_id)
+        adjacency.setdefault(vm_id, set()).add(host_id)
+
+    # Resolve switch neighbors for hypervisors and clean up bleed-through edges.
+    # Must run after all virt_host_of entries are populated.
+    _switch_ids_for_mac: set[str] = {
+        dev.id for dev in all_devices if _dev_in_types(dev, {"switch"})
+    }
+    for vm_id, host_id in virt_host_of.items():
+        for sw_id in list(adjacency.get(vm_id, set())):
+            if sw_id not in _switch_ids_for_mac:
+                continue
+            # Wire hypervisor ↔ switch (physical uplink inferred from VM LLDP)
+            adjacency.setdefault(host_id, set()).add(sw_id)
+            adjacency.setdefault(sw_id, set()).add(host_id)
+            # Remove the spurious VM ↔ switch edge
+            adjacency[vm_id].discard(sw_id)
+            adjacency[sw_id].discard(vm_id)
+
+    if virt_host_of:
+        logger.info(
+            "auto_place: virtual link injection — %d hypervisor→VM pairs",
+            len(virt_host_of),
+        )
+
     devices = approved_devices
     _dev_label = {dev.id: (dev.label or dev.hostname or dev.ip or dev.id) for dev in devices}
 
@@ -526,6 +581,10 @@ async def run_auto_place(
             or not confirmed_infra_ids      # no UniFi data → trust type field
             or d.id in confirmed_infra_ids
         )
+    } | {
+        # Hypervisors (xcpng, proxmox, docker_host) occupy a tier between
+        # switches and their guest VMs — no AP-style filter needed.
+        d.id for d in devices if _dev_in_types(d, _VIRTUAL_INFRA_TYPES)
     }
 
     # Infra-only adjacency — both endpoints must be infra devices
@@ -602,10 +661,16 @@ async def run_auto_place(
     for dev in devices:
         if dev.id in infra_ids:
             continue
-        cands = [n for n in adjacency.get(dev.id, set()) if n in layout_infra_set]
-        client_parent[dev.id] = (
-            max(cands, key=lambda n: (infra_tier_map[n], n)) if cands else None
-        )
+        # VMs with a known virtual hypervisor parent always group under that
+        # hypervisor, overriding any UniFi LLDP bleed-through adjacency.
+        virt_p = virt_host_of.get(dev.id)
+        if virt_p and virt_p in layout_infra_set:
+            client_parent[dev.id] = virt_p
+        else:
+            cands = [n for n in adjacency.get(dev.id, set()) if n in layout_infra_set]
+            client_parent[dev.id] = (
+                max(cands, key=lambda n: (infra_tier_map[n], n)) if cands else None
+            )
 
     # Phase 1 + 2: tidy-tree layout of infra with per-parent client groups.
     position, fallback_y = _compute_tree_layout(
@@ -683,11 +748,12 @@ async def run_auto_place(
     edges_created = 0
     seen_pairs: set[frozenset[str]] = set()
 
-    # Only draw edges between infrastructure devices (switch↔switch, switch↔AP,
-    # router↔switch). Omitting client→AP/switch edges keeps the canvas readable;
-    # tier position already shows which tier a client belongs to.
+    # Draw edges between infrastructure devices (switch↔switch, switch↔AP,
+    # router↔switch, switch↔hypervisor).  Virtual infra (xcpng/proxmox) is
+    # included so switch↔hypervisor edges are drawn.
     infra_dev_ids: set[str] = {
-        d.id for d in devices if _dev_in_types(d, _INFRA_TYPES)
+        d.id for d in devices
+        if _dev_in_types(d, _INFRA_TYPES | _VIRTUAL_INFRA_TYPES)
     }
 
     for dev_id, neighbors in adjacency.items():
@@ -708,7 +774,6 @@ async def run_auto_place(
             seen_pairs.add(pair)
             src_y = position.get(dev_id, (0.0, 0.0))[1]
             tgt_y = position.get(neighbor_id, (0.0, 0.0))[1]
-            # Y increases downward; source above target → exit bottom, enter top.
             if src_y <= tgt_y:
                 src_handle, tgt_handle = "bottom", "top-t"
             else:
@@ -723,6 +788,30 @@ async def run_auto_place(
                 target_handle=tgt_handle,
             ))
             edges_created += 1
+
+    # Draw hypervisor → VM edges (virtual type) for all approved vm/hypervisor pairs.
+    approved_set_ids: set[str] = {d.id for d in approved_devices}
+    for vm_id, host_id in virt_host_of.items():
+        if vm_id not in approved_set_ids or host_id not in approved_set_ids:
+            continue
+        src_node = all_node_by_dev.get(host_id)
+        tgt_node = all_node_by_dev.get(vm_id)
+        if not src_node or not tgt_node:
+            continue
+        pair = frozenset([src_node, tgt_node])
+        if pair in existing_edge_pairs or pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+        db.add(Edge(
+            id=str(uuid.uuid4()),
+            source=src_node,
+            target=tgt_node,
+            design_id=design_id,
+            type="virtual",
+            source_handle="bottom",
+            target_handle="top-t",
+        ))
+        edges_created += 1
 
     await db.commit()
     logger.info(
