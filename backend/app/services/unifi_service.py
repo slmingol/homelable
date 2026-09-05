@@ -130,7 +130,7 @@ async def fetch_unifi_topology(
     verify_tls: bool = False,
 ) -> dict[str, Any]:
     """Return UniFi topology: LLDP edges between infra, client uplinks, infra MAC map."""
-    empty: dict[str, Any] = {"lldp_edges": [], "client_uplinks": {}, "infra_macs": {}, "device_uplinks": {}}
+    empty: dict[str, Any] = {"lldp_edges": [], "client_uplinks": {}, "infra_macs": {}, "device_uplinks": {}, "stp_priorities": {}}
     client = httpx.AsyncClient(verify=verify_tls, timeout=15.0)
     try:
         cookies = await _login(client, host, port, username, password)
@@ -148,6 +148,9 @@ async def fetch_unifi_topology(
         # When it doesn't (e.g. uplink is the router), the device is a core switch
         # that should be wired directly to the BFS root.
         device_uplinks: dict[str, str] = {}
+        # Maps device MAC → STP bridge priority (lower = closer to root bridge).
+        # UniFi exposes this as stp_priority at the top level of each switch device.
+        stp_priorities: dict[str, int] = {}
 
         for device in infra_devices:
             dev_mac = (device.get("mac") or "").lower()
@@ -168,11 +171,28 @@ async def fetch_unifi_topology(
             uplink_mac = (uplink.get("mac") or uplink.get("uplink_mac") or "").lower()
             if dev_mac and uplink_mac and uplink_mac != dev_mac:
                 device_uplinks[dev_mac] = uplink_mac
+            # STP bridge priority — lowest value = root bridge. UniFi stores this
+            # as stp_priority on the switch device. Only meaningful for switches.
+            if raw_type.startswith("usw"):
+                stp_val = device.get("stp_priority")
+                if stp_val is None:
+                    # Also try nested locations some firmware versions use
+                    stp_val = (device.get("config") or {}).get("stp_priority")
+                if stp_val is not None:
+                    try:
+                        stp_priorities[dev_mac] = int(stp_val)
+                    except (ValueError, TypeError):
+                        pass
 
         logger.info(
             "unifi_topology: device_uplinks (%d entries): %s",
             len(device_uplinks),
             {infra_macs.get(k, {}).get("name", k): v for k, v in device_uplinks.items()},
+        )
+        logger.info(
+            "unifi_topology: stp_priorities (%d entries): %s",
+            len(stp_priorities),
+            {infra_macs.get(k, {}).get("name", k): v for k, v in sorted(stp_priorities.items(), key=lambda x: x[1])},
         )
 
         client_uplinks: dict[str, str] = {}
@@ -189,6 +209,7 @@ async def fetch_unifi_topology(
             "client_uplinks": client_uplinks,
             "infra_macs": infra_macs,
             "device_uplinks": device_uplinks,
+            "stp_priorities": stp_priorities,
         }
     except Exception as exc:
         logger.warning("UniFi topology fetch failed: %s", exc)
