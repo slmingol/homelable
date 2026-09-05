@@ -167,6 +167,11 @@ async def fetch_unifi_topology(
             uplink_mac = (uplink.get("uplink_mac") or "").lower()
             if dev_mac and uplink_mac and uplink_mac != dev_mac:
                 device_uplinks[dev_mac] = uplink_mac
+            elif dev_mac and uplink and not uplink_mac:
+                logger.info(
+                    "unifi_topology: device %s uplink keys=%s",
+                    name, list(uplink.keys())[:10],
+                )
 
         client_uplinks: dict[str, str] = {}
         for sta in clients:
