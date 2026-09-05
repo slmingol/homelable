@@ -267,6 +267,7 @@ async def run_auto_place(
     adjacency = await _build_topology(all_devices)
 
     devices = approved_devices
+    _dev_label = {dev.id: (dev.label or dev.hostname or dev.ip or dev.id) for dev in devices}
 
     # --- 4. BFS tier layout from root devices ------------------------------
     roots: list[str] = [
@@ -276,7 +277,25 @@ async def run_auto_place(
 
     if not roots:
         if adjacency:
-            roots = [max(adjacency, key=lambda k: len(adjacency[k]))]
+            # Prefer the approved switch/AP directly connected to a root-typed
+            # device in all_devices (e.g. the switch whose port faces pfsense).
+            # This fires when the firewall/router is in the DB but not approved.
+            root_typed_ids: set[str] = {
+                d.id for d in all_devices if _dev_in_types(d, _ROOT_TYPES)
+            }
+            approved_ids: set[str] = {d.id for d in devices}
+            near_root = [
+                dev_id for dev_id in approved_ids
+                if any(n in root_typed_ids for n in adjacency.get(dev_id, set()))
+            ]
+            if near_root:
+                roots = [max(near_root, key=lambda k: len(adjacency.get(k, set())))]
+                logger.info(
+                    "auto_place: BFS root selected by proximity to firewall/router: %s",
+                    _dev_label.get(roots[0], roots[0]),
+                )
+            else:
+                roots = [max(adjacency, key=lambda k: len(adjacency[k]))]
         else:
             roots = [devices[0].id]
 
@@ -295,7 +314,6 @@ async def run_auto_place(
             tier[dev.id] = max_tier + 1
 
     # Log tier assignments for infra devices to diagnose switch hierarchy
-    _dev_label = {dev.id: (dev.label or dev.hostname or dev.ip or dev.id) for dev in devices}
     infra_tiers = {
         _dev_label.get(dev.id, dev.id): tier[dev.id]
         for dev in devices
