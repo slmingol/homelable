@@ -77,7 +77,7 @@ async def _build_topology(
     # device_id -> STP bridge priority (lower = root bridge candidate)
     stp_by_dev: dict[str, int] = {}
     # device IDs confirmed as real UniFi-managed infra (/stat/device)
-    confirmed_infra_ids: set[str] = {}
+    confirmed_infra_ids: set[str] = set()
 
     def _add_edge(dev_a: str, dev_b: str) -> None:
         if dev_a != dev_b:
