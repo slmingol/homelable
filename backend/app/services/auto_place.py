@@ -337,19 +337,6 @@ async def run_auto_place(
         if dev.id not in tier:
             tier[dev.id] = max_tier + 1
 
-    # Log tier assignments for infra devices to diagnose switch hierarchy
-    infra_tiers = {
-        _dev_label.get(dev.id, dev.id): tier[dev.id]
-        for dev in devices
-        if _dev_in_types(dev, _INFRA_TYPES) and dev.id in tier
-    }
-    if infra_tiers:
-        logger.info(
-            "auto_place: infra tier assignments (%d devices):\n  %s",
-            len(infra_tiers),
-            "\n  ".join(f"{n}=t{t}" for n, t in sorted(infra_tiers.items(), key=lambda x: x[1])),
-        )
-
     # --- 5. Compute positions (two-phase) ------------------------------------
     # Phase 1: place infra devices in a clean BFS tree using infra-only edges.
     # Phase 2: place all other (client) devices below, sorted by their infra
@@ -435,6 +422,17 @@ async def run_auto_place(
             infra_tiers_grouped.setdefault(t, []).append(dev_id)
     for t_num in infra_tiers_grouped:
         infra_tiers_grouped[t_num].sort(key=lambda d: dfs_index.get(d, 999))
+
+    if infra_tiers_grouped:
+        logger.info(
+            "auto_place: infra layout tiers (%d devices):\n  %s",
+            sum(len(v) for v in infra_tiers_grouped.values()),
+            "\n  ".join(
+                f"{_dev_label.get(d, d)}=t{t}"
+                for t, ids in sorted(infra_tiers_grouped.items())
+                for d in ids
+            ),
+        )
 
     position: dict[str, tuple[float, float]] = {}
     y_offset = 0.0
