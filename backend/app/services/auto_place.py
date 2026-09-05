@@ -47,7 +47,7 @@ def _dev_in_types(dev: "InventoryDevice", types: set[str]) -> bool:
 
 async def _build_topology(
     devices: list[InventoryDevice],
-) -> dict[str, set[str]]:
+) -> tuple[dict[str, set[str]], dict[str, int]]:
     """Return adjacency map: device_id -> set of neighbor device_ids.
 
     Sources (all non-fatal — partial results are usable):
@@ -69,6 +69,8 @@ async def _build_topology(
         dev_label[dev.id] = dev.label or dev.hostname or dev.ip or dev.id
 
     adjacency: dict[str, set[str]] = {}
+    # device_id -> STP bridge priority (lower = root bridge candidate)
+    stp_by_dev: dict[str, int] = {}
 
     def _add_edge(dev_a: str, dev_b: str) -> None:
         if dev_a != dev_b:
@@ -177,6 +179,12 @@ async def _build_topology(
                     [dev_label.get(r, r) for r in root_ids],
                 )
 
+            # STP priorities: translate MAC keys to device IDs
+            for stp_mac, stp_prio in topo.get("stp_priorities", {}).items():
+                dev_id = mac_to_dev.get(stp_mac)
+                if dev_id:
+                    stp_by_dev[dev_id] = stp_prio
+
         except Exception as exc:
             logger.warning("auto_place: UniFi topology fetch failed: %s", exc)
 
@@ -215,7 +223,7 @@ async def _build_topology(
                     _add_edge(dev_id, neighbor_dev_id)
         logger.info("auto_place: SNMP walk on %d infra device(s)", len(snmp_infra))
 
-    return adjacency
+    return adjacency, stp_by_dev
 
 
 async def run_auto_place(
@@ -264,7 +272,7 @@ async def run_auto_place(
 
     # --- 3. Build topology adjacency from UniFi + SNMP ---------------------
     # Pass all non-hidden devices for MAC resolution; placement uses approved only.
-    adjacency = await _build_topology(all_devices)
+    adjacency, stp_by_dev = await _build_topology(all_devices)
 
     devices = approved_devices
     _dev_label = {dev.id: (dev.label or dev.hostname or dev.ip or dev.id) for dev in devices}
@@ -277,25 +285,39 @@ async def run_auto_place(
 
     if not roots:
         if adjacency:
-            # Prefer the approved switch/AP directly connected to a root-typed
-            # device in all_devices (e.g. the switch whose port faces pfsense).
-            # This fires when the firewall/router is in the DB but not approved.
-            root_typed_ids: set[str] = {
-                d.id for d in all_devices if _dev_in_types(d, _ROOT_TYPES)
-            }
             approved_ids: set[str] = {d.id for d in devices}
-            near_root = [
-                dev_id for dev_id in approved_ids
-                if any(n in root_typed_ids for n in adjacency.get(dev_id, set()))
-            ]
-            if near_root:
-                roots = [max(near_root, key=lambda k: len(adjacency.get(k, set())))]
+            # 1. Lowest STP bridge priority among approved switches = root bridge.
+            #    Priority 0 < 4096 < 8192 … — the switch explicitly elected as root.
+            stp_candidates = {
+                dev_id: prio for dev_id, prio in stp_by_dev.items()
+                if dev_id in approved_ids
+            }
+            if stp_candidates:
+                roots = [min(stp_candidates, key=stp_candidates.__getitem__)]
                 logger.info(
-                    "auto_place: BFS root selected by proximity to firewall/router: %s",
+                    "auto_place: BFS root selected by lowest STP priority (%d): %s",
+                    stp_candidates[roots[0]],
                     _dev_label.get(roots[0], roots[0]),
                 )
             else:
-                roots = [max(adjacency, key=lambda k: len(adjacency[k]))]
+                # 2. Approved switch directly connected to a root-typed device
+                #    (e.g. the switch whose port faces pfsense/opnsense).
+                root_typed_ids: set[str] = {
+                    d.id for d in all_devices if _dev_in_types(d, _ROOT_TYPES)
+                }
+                near_root = [
+                    dev_id for dev_id in approved_ids
+                    if any(n in root_typed_ids for n in adjacency.get(dev_id, set()))
+                ]
+                if near_root:
+                    roots = [max(near_root, key=lambda k: len(adjacency.get(k, set())))]
+                    logger.info(
+                        "auto_place: BFS root selected by proximity to firewall/router: %s",
+                        _dev_label.get(roots[0], roots[0]),
+                    )
+                else:
+                    # 3. Last resort: most-connected node.
+                    roots = [max(adjacency, key=lambda k: len(adjacency[k]))]
         else:
             roots = [devices[0].id]
 
