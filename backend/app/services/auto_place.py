@@ -191,6 +191,11 @@ async def _build_topology(
                 dev_id = mac_to_dev.get(infra_mac)
                 if dev_id:
                     confirmed_infra_ids.add(dev_id)
+            logger.info(
+                "auto_place: confirmed_infra_ids (%d): %s",
+                len(confirmed_infra_ids),
+                [dev_label.get(d, d) for d in confirmed_infra_ids],
+            )
 
             # STP priorities: translate MAC keys to device IDs
             for stp_mac, stp_prio in topo.get("stp_priorities", {}).items():
