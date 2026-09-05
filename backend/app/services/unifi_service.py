@@ -169,6 +169,12 @@ async def fetch_unifi_topology(
             if dev_mac and uplink_mac and uplink_mac != dev_mac:
                 device_uplinks[dev_mac] = uplink_mac
 
+        logger.info(
+            "unifi_topology: device_uplinks (%d entries): %s",
+            len(device_uplinks),
+            {infra_macs.get(k, {}).get("name", k): v for k, v in device_uplinks.items()},
+        )
+
         client_uplinks: dict[str, str] = {}
         for sta in clients:
             sta_mac = (sta.get("mac") or "").lower()
