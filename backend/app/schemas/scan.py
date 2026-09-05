@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, field_validator
 
@@ -169,6 +169,9 @@ class InventoryDeviceUpdate(BaseModel):
     snmp_version: str | None = None
     snmp_port: int | None = None
     snmp_oids: list[Any] | None = None
+    # Lifecycle field — only approved/pending transitions allowed via PATCH
+    # (hidden uses the dedicated /hide route; the approve workflow creates a node)
+    status: Literal["approved", "pending"] | None = None
 
 
 class ScanRunResponse(BaseModel):
