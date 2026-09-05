@@ -226,6 +226,15 @@ class Settings(BaseSettings):
     pfsense_sync_enabled: bool = False
     pfsense_sync_interval: int = 3600
 
+    # XCP-ng inventory via Xen Orchestra (XO) JSON-RPC API. Credentials → env only.
+    # XCPNG_HOST=xcpng-xo-01.bub.lan  XCPNG_USERNAME=xoa_...@...  XCPNG_PASSWORD=...
+    xcpng_host: str = ""
+    xcpng_username: str = ""
+    xcpng_password: str = ""
+    xcpng_verify_tls: bool = False
+    xcpng_sync_enabled: bool = False
+    xcpng_sync_interval: int = 3600
+
     snmp_poll_enabled: bool = False
     snmp_poll_interval: int = 300
 
@@ -338,6 +347,11 @@ class Settings(BaseSettings):
                 self.pfsense_sync_enabled = bool(data["pfsense_sync_enabled"])
             if "pfsense_sync_interval" in data:
                 self.pfsense_sync_interval = int(data["pfsense_sync_interval"])
+            # XCP-ng: only sync activation is persisted. Credentials are env-only.
+            if "xcpng_sync_enabled" in data:
+                self.xcpng_sync_enabled = bool(data["xcpng_sync_enabled"])
+            if "xcpng_sync_interval" in data:
+                self.xcpng_sync_interval = int(data["xcpng_sync_interval"])
         except Exception:
             pass
 
@@ -380,6 +394,9 @@ class Settings(BaseSettings):
             "opnsense_sync_interval": self.opnsense_sync_interval,
             "pfsense_sync_enabled": self.pfsense_sync_enabled,
             "pfsense_sync_interval": self.pfsense_sync_interval,
+            # XCP-ng: only sync activation is persisted. Credentials are env-only.
+            "xcpng_sync_enabled": self.xcpng_sync_enabled,
+            "xcpng_sync_interval": self.xcpng_sync_interval,
         }))
 
 

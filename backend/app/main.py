@@ -25,6 +25,7 @@ from app.api.routes import (
     stats,
     status,
     unifi as unifi_routes,
+    xcpng as xcpng_routes,
     zigbee,
     zwave,
 )
@@ -101,6 +102,7 @@ app.include_router(snmp_routes.router, prefix="/api/v1/snmp", tags=["snmp"])
 app.include_router(unifi_routes.router, prefix="/api/v1/unifi", tags=["unifi"])
 app.include_router(opnsense_routes.router, prefix="/api/v1/opnsense", tags=["opnsense"])
 app.include_router(pfsense_routes.router, prefix="/api/v1/pfsense", tags=["pfsense"])
+app.include_router(xcpng_routes.router, prefix="/api/v1/xcpng", tags=["xcpng"])
 
 
 @app.get("/api/v1/health")

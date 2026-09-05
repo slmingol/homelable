@@ -163,6 +163,7 @@ export const NODE_TYPE_DEFAULT_ICONS: Record<NodeType, LucideIcon> = {
   switch:           Network,
   server:           Server,
   proxmox:          Layers,
+  xcpng:            Layers,
   vm:               Box,
   lxc:              Container,
   nas:              HardDrive,
