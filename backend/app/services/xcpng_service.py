@@ -65,9 +65,12 @@ def _sanitize_error(exc: BaseException) -> str:
 
 
 def _make_client(host: str, verify_tls: bool) -> httpx.AsyncClient:
+    # XO typically listens on HTTP; use https:// only when the caller sets verify_tls=True
+    # (implies a properly configured TLS endpoint).
+    scheme = "https" if verify_tls else "http"
     timeout = httpx.Timeout(_READ_TIMEOUT, connect=_CONNECT_TIMEOUT)
     return httpx.AsyncClient(
-        base_url=f"https://{host}",
+        base_url=f"{scheme}://{host}",
         verify=verify_tls,
         timeout=timeout,
         follow_redirects=True,
