@@ -408,31 +408,20 @@ async def run_auto_place(
             infra_tier_map[dev_id] = max_infra_tier + 1
 
     # Type-stratified tier adjustment: enforce the visual hierarchy
-    #   t0 : firewalls / routers / gateways  (WAN boundary)
-    #   t1..n : switches, ordered by BFS depth from TOR switch
+    #   t0 : firewalls / routers / gateways  (BFS roots, already at 0)
+    #   t1..n : switches, ordered by BFS depth through infra_adj
     #   t(n+1): APs, all at the same tier regardless of which switch they face
     #   (client area below)
-    _fw_ids = {d.id for d in devices if d.id in infra_ids and _dev_in_types(d, _ROOT_TYPES)}
     _sw_ids = {d.id for d in devices if d.id in infra_ids and _dev_in_types(d, {"switch"})}
     _ap_ids = {d.id for d in devices if d.id in infra_ids and _dev_in_types(d, {"ap"})}
 
-    # Move all APs to one tier beyond the deepest switch
+    # Move all APs to one tier beyond the deepest switch; FWs stay at t0 (BFS root).
+    # Do NOT adjust FW tiers — they are already at 0 as infra_root_ids, and moving
+    # them to -1 then normalizing shifts every switch up by 1, creating a t1 gap.
     max_sw_tier = max((infra_tier_map[d] for d in _sw_ids if d in infra_tier_map), default=0)
     for dev_id in _ap_ids:
         if dev_id in infra_tier_map:
             infra_tier_map[dev_id] = max_sw_tier + 1
-
-    # Move all firewalls to tier -1 (normalised to 0 below)
-    for dev_id in _fw_ids:
-        if dev_id in infra_tier_map:
-            infra_tier_map[dev_id] = -1
-
-    # Normalise so the lowest tier is always 0
-    if infra_tier_map:
-        _min_t = min(infra_tier_map.values())
-        if _min_t < 0:
-            for dev_id in infra_tier_map:
-                infra_tier_map[dev_id] -= _min_t
 
     # Build tier groups (approved infra devices only), ordered by DFS traversal
     # of the infra tree so edges between tiers don't cross.
