@@ -49,8 +49,11 @@ def _dev_in_types(dev: "InventoryDevice", types: set[str]) -> bool:
 
 async def _build_topology(
     devices: list[InventoryDevice],
-) -> tuple[dict[str, set[str]], dict[str, int]]:
-    """Return adjacency map: device_id -> set of neighbor device_ids.
+) -> tuple[dict[str, set[str]], dict[str, int], set[str]]:
+    """Return (adjacency, stp_by_dev, confirmed_infra_ids).
+
+    confirmed_infra_ids is the set of device IDs confirmed as real UniFi-managed
+    infrastructure (appeared in /stat/device). Empty when UniFi is unconfigured.
 
     Sources (all non-fatal — partial results are usable):
       A. UniFi LLDP edges between infrastructure devices
@@ -73,6 +76,8 @@ async def _build_topology(
     adjacency: dict[str, set[str]] = {}
     # device_id -> STP bridge priority (lower = root bridge candidate)
     stp_by_dev: dict[str, int] = {}
+    # device IDs confirmed as real UniFi-managed infra (/stat/device)
+    confirmed_infra_ids: set[str] = {}
 
     def _add_edge(dev_a: str, dev_b: str) -> None:
         if dev_a != dev_b:
@@ -181,6 +186,12 @@ async def _build_topology(
                     [dev_label.get(r, r) for r in root_ids],
                 )
 
+            # Confirmed infra: every device that appeared in /stat/device
+            for infra_mac in topo.get("infra_macs", {}):
+                dev_id = mac_to_dev.get(infra_mac)
+                if dev_id:
+                    confirmed_infra_ids.add(dev_id)
+
             # STP priorities: translate MAC keys to device IDs
             for stp_mac, stp_prio in topo.get("stp_priorities", {}).items():
                 dev_id = mac_to_dev.get(stp_mac)
@@ -225,7 +236,7 @@ async def _build_topology(
                     _add_edge(dev_id, neighbor_dev_id)
         logger.info("auto_place: SNMP walk on %d infra device(s)", len(snmp_infra))
 
-    return adjacency, stp_by_dev
+    return adjacency, stp_by_dev, confirmed_infra_ids
 
 
 async def run_auto_place(
@@ -274,7 +285,7 @@ async def run_auto_place(
 
     # --- 3. Build topology adjacency from UniFi + SNMP ---------------------
     # Pass all non-hidden devices for MAC resolution; placement uses approved only.
-    adjacency, stp_by_dev = await _build_topology(all_devices)
+    adjacency, stp_by_dev, confirmed_infra_ids = await _build_topology(all_devices)
 
     devices = approved_devices
     _dev_label = {dev.id: (dev.label or dev.hostname or dev.ip or dev.id) for dev in devices}
@@ -343,15 +354,18 @@ async def run_auto_place(
     # parent so clients of the same switch/AP appear adjacent.
 
     approved_set: set[str] = {d.id for d in devices}
-    # AP-typed devices are only treated as infra if UniFi-confirmed or SNMP-enabled.
+    # AP-typed devices are only treated as infra if they appear in the UniFi
+    # /stat/device response (confirmed_infra_ids) or have SNMP enabled.
     # IP/ARP scanners mistype WiFi clients (Google Nest, Chromecast, etc.) as 'ap';
-    # real access points always appear in the UniFi device list.
+    # real access points always appear in the UniFi device inventory.
+    # If UniFi is unconfigured (confirmed_infra_ids empty), trust type='ap' as-is.
     infra_ids: set[str] = {
         d.id for d in devices
         if _dev_in_types(d, _INFRA_TYPES)
         and (
             not _dev_in_types(d, {"ap"})
-            or "unifi" in (d.discovery_sources or [d.discovery_source or ""])
+            or not confirmed_infra_ids          # no UniFi data → trust type field
+            or d.id in confirmed_infra_ids
             or d.snmp_enabled
         )
     }
