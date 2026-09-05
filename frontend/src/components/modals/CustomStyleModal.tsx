@@ -27,7 +27,7 @@ import { MarkerShapePicker } from './MarkerShapePicker'
 
 const NODE_TYPE_GROUPS: { label: string; types: NodeType[] }[] = [
   { label: 'Hardware',       types: ['isp', 'router', 'firewall', 'switch', 'server', 'nas', 'kvm', 'ap', 'printer'] },
-  { label: 'Virtualization', types: ['proxmox', 'vm', 'lxc', 'docker_host', 'docker_container'] },
+  { label: 'Virtualization', types: ['proxmox', 'xcpng', 'vm', 'lxc', 'docker_host', 'docker_container'] },
   { label: 'IoT',            types: ['iot', 'camera', 'cpl'] },
   { label: 'Zigbee',         types: ['zigbee_coordinator', 'zigbee_router', 'zigbee_enddevice'] },
   { label: 'Z-Wave',         types: ['zwave_coordinator', 'zwave_router', 'zwave_enddevice'] },
@@ -38,7 +38,7 @@ const NODE_TYPE_GROUPS: { label: string; types: NodeType[] }[] = [
 const EDITABLE_EDGE_TYPES: EdgeType[] = ['ethernet', 'wifi', 'iot', 'vlan', 'virtual', 'cluster', 'fibre', 'electrical']
 
 const NODE_ICONS: Record<string, LucideIcon> = {
-  isp: Globe, router: Router, firewall: Flame, switch: Network, server: Server, proxmox: Layers,
+  isp: Globe, router: Router, firewall: Flame, switch: Network, server: Server, proxmox: Layers, xcpng: Layers,
   vm: Box, lxc: Container, nas: HardDrive, iot: Cpu, ap: Wifi,
   camera: Camera, printer: Printer, computer: Monitor, laptop: Laptop, mobile: Smartphone, cpl: PlugZap,
   docker_host: Anchor, docker_container: Package,
