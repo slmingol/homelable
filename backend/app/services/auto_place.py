@@ -6,6 +6,7 @@ re-layout) approved devices on the target design using a BFS tier layout.
 """
 import asyncio
 import logging
+import math
 import uuid
 from typing import Any
 from urllib.parse import urlsplit
@@ -20,12 +21,15 @@ from app.services.unifi_service import fetch_unifi_topology
 
 logger = logging.getLogger(__name__)
 
-INFRA_NODE_WIDTH = 320    # horizontal slot for infra devices
-INFRA_TIER_HEIGHT = 280   # vertical gap between infra tiers
-CLIENT_NODE_WIDTH = 220   # horizontal slot for client/non-infra devices
-CLIENT_NODE_HEIGHT = 70   # vertical slot per client row
-CLIENT_TIER_HEIGHT = 350  # vertical gap from last infra tier to client area
-CLIENT_MAX_PER_ROW = 10   # clients per row in the flat client area
+# --- Layout constants ------------------------------------------------------
+# Positions are slot top-left (existing convention): x = centre_x - slot/2.
+INFRA_NODE_WIDTH = 320    # horizontal slot (= leaf width) for an infra device
+INFRA_TIER_HEIGHT = 260   # vertical distance between infra tiers
+CLIENT_NODE_WIDTH = 220   # horizontal slot per client in a group grid
+CLIENT_NODE_HEIGHT = 80   # vertical slot per client row in a group grid
+CLIENT_TIER_GAP = 260     # vertical gap from the deepest infra tier to the client band
+CLIENT_MAX_COLS = 4       # max columns in one per-parent client group
+CLIENT_GROUP_GAP = 120    # horizontal whitespace between adjacent client groups
 LLDP_TIMEOUT = 5.0
 
 # Tier-0 roots (highest in topology hierarchy)
@@ -45,6 +49,160 @@ def _dev_in_types(dev: "InventoryDevice", types: set[str]) -> bool:
         (dev.type or "").lower() in types
         or (dev.suggested_type or "").lower() in types
     )
+
+
+def _client_grid_shape(n: int) -> tuple[int, int]:
+    """(cols, rows) for a group of n clients: roughly square, at most CLIENT_MAX_COLS wide."""
+    if n <= 0:
+        return 0, 0
+    cols = min(CLIENT_MAX_COLS, max(1, math.ceil(math.sqrt(n))))
+    return cols, math.ceil(n / cols)
+
+
+_CLIENT_LEAF = "clients:"   # prefix for virtual tree leaves that stand in for a client group
+_ORPHAN_KEY = "_orphans"    # client-group key for clients with no infra parent
+
+
+def _compute_tree_layout(
+    infra_ids: list[str],
+    infra_tier_map: dict[str, int],
+    infra_bfs_parent: dict[str, str],
+    infra_adj: dict[str, set[str]],
+    client_parent: dict[str, str | None],
+    label_of: dict[str, str],
+) -> tuple[dict[str, tuple[float, float]], float]:
+    """Tidy-tree (Reingold-Tilford style) layout for infra + grouped clients.
+
+    Tree = the infra BFS tree, plus one *virtual leaf* per infra node that has
+    clients (its "client group").  Leaves have fixed widths, every parent is
+    centred over its children, and sibling subtrees never overlap horizontally,
+    so no primary-tree edge passes through another node.  The client group's
+    virtual leaf reserves an empty column through every tier below its parent,
+    so long parent->client edges also have a clear corridor.
+
+    Multiple roots (firewalls): the forest of tier-1 "hubs" is tidied first,
+    then each root is placed at the centroid of its non-root infra neighbours
+    and roots are pushed apart to INFRA_NODE_WIDTH spacing (two firewalls that
+    both face one core switch end up at core.x -/+ 160).
+
+    Returns (position, client_band_bottom_y).  ``position`` maps device id to
+    slot top-left (x, y).
+    """
+    infra_set = set(infra_ids)
+    roots = [d for d in infra_ids if infra_tier_map[d] == 0]
+    root_set = set(roots)
+
+    def _lbl(d: str) -> str:
+        return label_of.get(d, d).lower()
+
+    # -- children map from the BFS tree ------------------------------------
+    children: dict[str, list[str]] = {d: [] for d in infra_ids}
+    hubs: list[str] = []            # tops of the non-root forest
+    for d in infra_ids:
+        if d in root_set:
+            continue
+        p = infra_bfs_parent.get(d)
+        if p in root_set or p not in infra_set:
+            hubs.append(d)          # sits directly under a firewall, or unattached
+        else:
+            children[p].append(d)
+
+    # -- client groups -> one virtual leaf per parent ----------------------
+    groups: dict[str, list[str]] = {}
+    for cid, p in client_parent.items():
+        groups.setdefault(p if p in infra_set else _ORPHAN_KEY, []).append(cid)
+    for cids in groups.values():
+        cids.sort(key=_lbl)
+
+    def _leaf(key: str) -> str:
+        return _CLIENT_LEAF + key
+
+    for p in infra_ids:
+        kids = children[p]
+        kids.sort(key=_lbl)
+        if p in groups:
+            # Client group sits in the middle so the parent hangs straight above it.
+            kids.insert(len(kids) // 2, _leaf(p))
+    hubs.sort(key=_lbl)
+    if _ORPHAN_KEY in groups:
+        hubs.append(_leaf(_ORPHAN_KEY))
+
+    def _leaf_width(node: str) -> float:
+        if node.startswith(_CLIENT_LEAF):
+            cols, _ = _client_grid_shape(len(groups[node[len(_CLIENT_LEAF):]]))
+            return cols * CLIENT_NODE_WIDTH + CLIENT_GROUP_GAP
+        return INFRA_NODE_WIDTH
+
+    # -- pass 1: subtree widths, bottom-up --------------------------------
+    width: dict[str, float] = {}
+
+    def _measure(node: str) -> float:
+        kids = children.get(node, [])
+        if not kids:
+            width[node] = _leaf_width(node)
+        else:
+            width[node] = max(INFRA_NODE_WIDTH, sum(_measure(k) for k in kids))
+        return width[node]
+
+    # -- pass 2: centre x, top-down -----------------------------------------
+    cx: dict[str, float] = {}
+
+    def _place(node: str, left: float) -> None:
+        kids = children.get(node, [])
+        if not kids:
+            cx[node] = left + width[node] / 2
+            return
+        cursor = left + (width[node] - sum(width[k] for k in kids)) / 2
+        for k in kids:
+            _place(k, cursor)
+            cursor += width[k]
+        cx[node] = (cx[kids[0]] + cx[kids[-1]]) / 2
+
+    total = sum(_measure(h) for h in hubs)
+    cursor = -total / 2
+    for h in hubs:
+        _place(h, cursor)
+        cursor += width[h]
+
+    # -- roots: centroid of the hubs they face, then de-overlap -------------
+    # Only tier-1 hubs count; deeper cross-edges (e.g. a firewall's secondary
+    # link to a distribution switch) are drawn but must not drag the root.
+    hub_set = set(hubs)
+    wanted: list[tuple[float, str]] = []
+    for r in roots:
+        xs = [cx[n] for n in infra_adj.get(r, ()) if n in hub_set]
+        if not xs:
+            xs = [cx[n] for n in infra_adj.get(r, ()) if n in cx and n not in root_set]
+        wanted.append((sum(xs) / len(xs) if xs else 0.0, r))
+    wanted.sort()
+    placed: list[float] = []
+    for want, _ in wanted:
+        placed.append(want if not placed else max(want, placed[-1] + INFRA_NODE_WIDTH))
+    if placed:
+        # Shift the whole root row so its centre matches the centre of the wanted xs.
+        shift = (sum(w for w, _ in wanted) - sum(placed)) / len(placed)
+        for (_, r), x in zip(wanted, placed):
+            cx[r] = x + shift
+
+    # -- emit positions ------------------------------------------------------
+    position: dict[str, tuple[float, float]] = {}
+    for d in infra_ids:
+        position[d] = (cx[d] - INFRA_NODE_WIDTH / 2, infra_tier_map[d] * INFRA_TIER_HEIGHT)
+
+    max_tier = max(infra_tier_map[d] for d in infra_ids) if infra_ids else 0
+    client_y0 = max_tier * INFRA_TIER_HEIGHT + CLIENT_TIER_GAP
+    band_bottom = client_y0
+    for key, cids in groups.items():
+        cols, rows = _client_grid_shape(len(cids))
+        left = cx[_leaf(key)] - (cols * CLIENT_NODE_WIDTH) / 2
+        for i, cid in enumerate(cids):
+            position[cid] = (
+                left + (i % cols) * CLIENT_NODE_WIDTH,
+                client_y0 + (i // cols) * CLIENT_NODE_HEIGHT,
+            )
+        band_bottom = max(band_bottom, client_y0 + rows * CLIENT_NODE_HEIGHT)
+
+    return position, band_bottom
 
 
 async def _build_topology(
@@ -423,105 +581,41 @@ async def run_auto_place(
         if dev_id in infra_tier_map:
             infra_tier_map[dev_id] = max_sw_tier + 1
 
-    # Build tier groups (approved infra devices only), ordered by DFS traversal
-    # of the infra tree so edges between tiers don't cross.
-    def _dfs_infra(root_ids: list[str]) -> list[str]:
-        order: list[str] = []
-        visited: set[str] = set()
-        stack = list(reversed(root_ids))
-        while stack:
-            node = stack.pop()
-            if node in visited:
-                continue
-            visited.add(node)
-            order.append(node)
-            children = sorted(
-                [n for n in infra_adj.get(node, set())
-                 if infra_tier_map.get(n, -1) == infra_tier_map.get(node, -2) + 1],
-                key=lambda x: x,
-            )
-            stack.extend(reversed(children))
-        return order
-
-    dfs_ordered = _dfs_infra(infra_root_ids)
-    dfs_index = {dev_id: i for i, dev_id in enumerate(dfs_ordered)}
-
-    infra_tiers_grouped: dict[int, list[str]] = {}
-    for dev_id, t in infra_tier_map.items():
-        if dev_id in approved_set:
-            infra_tiers_grouped.setdefault(t, []).append(dev_id)
-    for t_num in infra_tiers_grouped:
-        infra_tiers_grouped[t_num].sort(key=lambda d: dfs_index.get(d, 999))
-
-    if infra_tiers_grouped:
+    # Infra devices that take part in the layout (approved + tiered).
+    layout_infra_ids = sorted(
+        (d for d in infra_tier_map if d in approved_set),
+        key=lambda d: (infra_tier_map[d], _dev_label.get(d, d).lower()),
+    )
+    if layout_infra_ids:
         logger.info(
             "auto_place: infra layout tiers (%d devices):\n  %s",
-            sum(len(v) for v in infra_tiers_grouped.values()),
+            len(layout_infra_ids),
             "\n  ".join(
-                f"{_dev_label.get(d, d)}=t{t}"
-                for t, ids in sorted(infra_tiers_grouped.items())
-                for d in ids
+                f"{_dev_label.get(d, d)}=t{infra_tier_map[d]}" for d in layout_infra_ids
             ),
         )
 
-    position: dict[str, tuple[float, float]] = {}
-    y_offset = 0.0
-    for t_num, ids in sorted(infra_tiers_grouped.items()):
-        row_width = len(ids) * INFRA_NODE_WIDTH
-        start_x = -row_width / 2
-        for col_idx, dev_id in enumerate(ids):
-            position[dev_id] = (start_x + col_idx * INFRA_NODE_WIDTH, y_offset)
-        y_offset += INFRA_TIER_HEIGHT
-
-    infra_y_bottom = y_offset  # top of client area
-
-    # Phase 2: client (non-infra) devices — sorted by parent infra device so
-    # clients of the same switch/AP appear together in the client area.
-    client_parent_infra: dict[str, str | None] = {}
+    # Phase 2 input: each client's infra parent.  Prefer the deepest-tier
+    # neighbour (AP over switch) and break ties by id so runs are stable.
+    layout_infra_set = set(layout_infra_ids)
+    client_parent: dict[str, str | None] = {}
     for dev in devices:
         if dev.id in infra_ids:
             continue
-        parent = None
-        for nbr_id in adjacency.get(dev.id, set()):
-            if nbr_id in infra_ids and nbr_id in position:
-                parent = nbr_id
-                break
-        client_parent_infra[dev.id] = parent
+        cands = [n for n in adjacency.get(dev.id, set()) if n in layout_infra_set]
+        client_parent[dev.id] = (
+            max(cands, key=lambda n: (infra_tier_map[n], n)) if cands else None
+        )
 
-    # Group then sort: parents ordered by their x position (left → right)
-    parent_clients: dict[str, list[str]] = {}
-    orphan_clients: list[str] = []
-    for dev in devices:
-        if dev.id in infra_ids:
-            continue
-        p = client_parent_infra.get(dev.id)
-        if p:
-            parent_clients.setdefault(p, []).append(dev.id)
-        else:
-            orphan_clients.append(dev.id)
-
-    sorted_parents = sorted(
-        parent_clients.keys(),
-        key=lambda pid: position.get(pid, (0.0, 0.0))[0],
+    # Phase 1 + 2: tidy-tree layout of infra with per-parent client groups.
+    position, fallback_y = _compute_tree_layout(
+        layout_infra_ids,
+        infra_tier_map,
+        infra_bfs_parent,
+        infra_adj,
+        client_parent,
+        _dev_label,
     )
-    all_clients_ordered: list[str] = []
-    for pid in sorted_parents:
-        all_clients_ordered.extend(parent_clients[pid])
-    all_clients_ordered.extend(orphan_clients)
-
-    client_y_start = infra_y_bottom + CLIENT_TIER_HEIGHT
-    if all_clients_ordered:
-        total_width = min(len(all_clients_ordered), CLIENT_MAX_PER_ROW) * CLIENT_NODE_WIDTH
-        cl_start_x = -total_width / 2
-        for i, client_id in enumerate(all_clients_ordered):
-            col = i % CLIENT_MAX_PER_ROW
-            row = i // CLIENT_MAX_PER_ROW
-            position[client_id] = (
-                cl_start_x + col * CLIENT_NODE_WIDTH,
-                client_y_start + row * CLIENT_NODE_HEIGHT,
-            )
-
-    fallback_y = client_y_start
 
     # --- 6. Create / reposition Node rows ----------------------------------
     nodes_placed = 0
