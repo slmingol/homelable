@@ -356,7 +356,18 @@ async def run_auto_place(
     # parent so clients of the same switch/AP appear adjacent.
 
     approved_set: set[str] = {d.id for d in devices}
-    infra_ids: set[str] = {d.id for d in devices if _dev_in_types(d, _INFRA_TYPES)}
+    # AP-typed devices are only treated as infra if UniFi-confirmed or SNMP-enabled.
+    # IP/ARP scanners mistype WiFi clients (Google Nest, Chromecast, etc.) as 'ap';
+    # real access points always appear in the UniFi device list.
+    infra_ids: set[str] = {
+        d.id for d in devices
+        if _dev_in_types(d, _INFRA_TYPES)
+        and (
+            not _dev_in_types(d, {"ap"})
+            or "unifi" in (d.discovery_sources or [d.discovery_source or ""])
+            or d.snmp_enabled
+        )
+    }
 
     # Infra-only adjacency — both endpoints must be infra devices
     infra_adj: dict[str, set[str]] = {
