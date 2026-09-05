@@ -589,11 +589,13 @@ async def run_auto_place(
     # Only draw edges between infrastructure devices (switch↔switch, switch↔AP,
     # router↔switch). Omitting client→AP/switch edges keeps the canvas readable;
     # tier position already shows which tier a client belongs to.
-    dev_by_id: dict[str, InventoryDevice] = {d.id: d for d in devices}
     infra_dev_ids: set[str] = {
         d.id for d in devices if _dev_in_types(d, _INFRA_TYPES)
     }
 
+    # Pass 1: collect all new infra-to-infra pairs without creating edges yet.
+    # (src_dev, tgt_dev, src_node_id, tgt_node_id, going_down)
+    new_pairs: list[tuple[str, str, str, str, bool]] = []
     for dev_id, neighbors in adjacency.items():
         if dev_id not in infra_dev_ids:
             continue
@@ -612,22 +614,59 @@ async def run_auto_place(
             seen_pairs.add(pair)
             src_y = position.get(dev_id, (0.0, 0.0))[1]
             tgt_y = position.get(neighbor_id, (0.0, 0.0))[1]
-            # Y increases downward; source above target → exit bottom, enter top.
-            if src_y <= tgt_y:
-                src_handle, tgt_handle = "bottom", "top-t"
-            else:
-                src_handle, tgt_handle = "top", "bottom-t"
-            db.add(Edge(
-                id=str(uuid.uuid4()),
-                source=src_node,
-                target=tgt_node,
-                design_id=design_id,
-                type="ethernet",
-                source_handle=src_handle,
-                target_handle=tgt_handle,
-                path_style="smooth",
-            ))
-            edges_created += 1
+            new_pairs.append((dev_id, neighbor_id, src_node, tgt_node, src_y <= tgt_y))
+
+    # Pass 2: count per-device handle usage so each connection gets its own slot.
+    # A device with N downward edges needs bottom_handles=N; N upward → top_handles=N.
+    from collections import defaultdict
+    bottom_need: dict[str, int] = defaultdict(int)
+    top_need: dict[str, int] = defaultdict(int)
+    for src_dev, tgt_dev, src_node, tgt_node, going_down in new_pairs:
+        if going_down:
+            bottom_need[src_dev] += 1  # exits source bottom
+            top_need[tgt_dev] += 1     # enters target top
+        else:
+            top_need[src_dev] += 1     # exits source top
+            bottom_need[tgt_dev] += 1  # enters target bottom
+
+    # Update Node handle counts for every infra device that has new connections.
+    for dev_id in set(bottom_need) | set(top_need):
+        node_id = all_node_by_dev.get(dev_id)
+        if not node_id:
+            continue
+        node_obj = await db.get(Node, node_id)
+        if not node_obj:
+            continue
+        node_obj.bottom_handles = max(node_obj.bottom_handles, bottom_need.get(dev_id, 0))
+        node_obj.top_handles    = max(node_obj.top_handles,    top_need.get(dev_id, 0))
+
+    # Pass 3: create edges with spread handle slots.
+    # handleId(side, i): i=0 → side name, i>0 → "{side}-{i+1}" (matches frontend)
+    def _hid(side: str, idx: int) -> str:
+        return side if idx == 0 else f"{side}-{idx + 1}"
+
+    slot: dict[tuple[str, str], int] = defaultdict(int)  # (node_id, side) → next slot
+
+    for src_dev, tgt_dev, src_node, tgt_node, going_down in new_pairs:
+        if going_down:
+            src_side, tgt_side = "bottom", "top"
+        else:
+            src_side, tgt_side = "top", "bottom"
+        src_handle = _hid(src_side, slot[(src_node, src_side)])
+        tgt_handle = _hid(tgt_side, slot[(tgt_node, tgt_side)]) + "-t"
+        slot[(src_node, src_side)] += 1
+        slot[(tgt_node, tgt_side)] += 1
+        db.add(Edge(
+            id=str(uuid.uuid4()),
+            source=src_node,
+            target=tgt_node,
+            design_id=design_id,
+            type="ethernet",
+            source_handle=src_handle,
+            target_handle=tgt_handle,
+            path_style="smooth",
+        ))
+        edges_created += 1
 
     await db.commit()
     logger.info(
