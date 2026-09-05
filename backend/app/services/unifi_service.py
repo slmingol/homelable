@@ -130,7 +130,7 @@ async def fetch_unifi_topology(
     verify_tls: bool = False,
 ) -> dict[str, Any]:
     """Return UniFi topology: LLDP edges between infra, client uplinks, infra MAC map."""
-    empty: dict[str, Any] = {"lldp_edges": [], "client_uplinks": {}, "infra_macs": {}}
+    empty: dict[str, Any] = {"lldp_edges": [], "client_uplinks": {}, "infra_macs": {}, "device_uplinks": {}}
     client = httpx.AsyncClient(verify=verify_tls, timeout=15.0)
     try:
         cookies = await _login(client, host, port, username, password)
@@ -142,6 +142,12 @@ async def fetch_unifi_topology(
 
         lldp_edges: list[tuple[str, str]] = []
         infra_macs: dict[str, dict[str, str]] = {}
+
+        # device_uplinks: maps a UniFi device MAC → its uplink device MAC.
+        # When the uplink resolves to a known device, BFS can route correctly.
+        # When it doesn't (e.g. uplink is the router), the device is a core switch
+        # that should be wired directly to the BFS root.
+        device_uplinks: dict[str, str] = {}
 
         for device in infra_devices:
             dev_mac = (device.get("mac") or "").lower()
@@ -156,6 +162,11 @@ async def fetch_unifi_topology(
                 ).lower()
                 if dev_mac and neighbor_mac and dev_mac != neighbor_mac:
                     lldp_edges.append((dev_mac, neighbor_mac))
+            # Uplink field — present on switches/APs managed by UniFi
+            uplink = device.get("uplink") or {}
+            uplink_mac = (uplink.get("uplink_mac") or "").lower()
+            if dev_mac and uplink_mac and uplink_mac != dev_mac:
+                device_uplinks[dev_mac] = uplink_mac
 
         client_uplinks: dict[str, str] = {}
         for sta in clients:
@@ -166,7 +177,12 @@ async def fetch_unifi_topology(
             if uplink:
                 client_uplinks[sta_mac] = uplink
 
-        return {"lldp_edges": lldp_edges, "client_uplinks": client_uplinks, "infra_macs": infra_macs}
+        return {
+            "lldp_edges": lldp_edges,
+            "client_uplinks": client_uplinks,
+            "infra_macs": infra_macs,
+            "device_uplinks": device_uplinks,
+        }
     except Exception as exc:
         logger.warning("UniFi topology fetch failed: %s", exc)
         return empty
