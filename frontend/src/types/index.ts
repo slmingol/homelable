@@ -30,6 +30,7 @@ export type NodeType =
   | 'switch'
   | 'server'
   | 'proxmox'
+  | 'xcpng'
   | 'vm'
   | 'lxc'
   | 'nas'
@@ -314,6 +315,7 @@ export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   switch: 'Switch',
   server: 'Server',
   proxmox: 'Proxmox VE',
+  xcpng: 'XCP-ng',
   vm: 'Virtual Machine',
   lxc: 'LXC Container',
   nas: 'NAS',
