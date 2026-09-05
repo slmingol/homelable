@@ -625,6 +625,7 @@ async def run_auto_place(
                 type="ethernet",
                 source_handle=src_handle,
                 target_handle=tgt_handle,
+                path_style="smooth",
             ))
             edges_created += 1
 
