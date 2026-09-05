@@ -131,6 +131,40 @@ async def _build_topology(
                     "auto_place: unmatched uplink MACs (AP/switch not in DB): %s",
                     ", ".join(sorted(set(unmatched_uplinks))),
                 )
+
+            # Device uplinks: each UniFi device reports its upstream device MAC.
+            # Devices whose uplink MAC doesn't resolve (e.g. the router is not
+            # a UniFi device) are "core" switches — wire them to every BFS root
+            # so BFS can traverse the full switch hierarchy.
+            root_macs: set[str] = {
+                dev.mac.lower() for dev in devices
+                if dev.mac and (dev.type or dev.suggested_type or "").lower() in _ROOT_TYPES
+            }
+            core_switches: list[str] = []
+            for dev_mac, uplink_mac in topo.get("device_uplinks", {}).items():
+                dev_id = mac_to_dev.get(dev_mac)
+                uplink_id = mac_to_dev.get(uplink_mac)
+                if dev_id and uplink_id:
+                    _add_edge(dev_id, uplink_id)
+                elif dev_id and not uplink_id:
+                    # Uplink not in DB — this device's upstream is a non-managed
+                    # device (e.g. pfsense/opnsense router). Treat it as a core switch.
+                    core_switches.append(dev_id)
+
+            if core_switches:
+                # Connect core switches to all BFS roots so BFS can traverse down
+                root_ids = [
+                    mac_to_dev[m] for m in root_macs if m in mac_to_dev
+                ]
+                for root_id in root_ids:
+                    for core_id in core_switches:
+                        _add_edge(root_id, core_id)
+                logger.info(
+                    "auto_place: core switch(es) wired to BFS roots: %s → %s",
+                    [dev_label.get(c, c) for c in core_switches],
+                    [dev_label.get(r, r) for r in root_ids],
+                )
+
         except Exception as exc:
             logger.warning("auto_place: UniFi topology fetch failed: %s", exc)
 
