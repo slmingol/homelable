@@ -815,18 +815,8 @@ async def run_auto_place(
     for _cid, _pid in client_parent.items():
         _parent_clients.setdefault(_pid, []).append(_cid)
 
-    # For already-placed clients (force=False skipped them), use their actual
-    # canvas position so the zone wraps where nodes really are, not the
-    # computed layout target they haven't been moved to yet. For force=True,
-    # existing_node_obj already has updated pos_x/y (written in the loop above).
-    def _resolved_pos(cid: str) -> tuple[float, float] | None:
-        if cid in existing_node_obj:
-            n = existing_node_obj[cid]
-            return (n.pos_x, n.pos_y)
-        return position.get(cid)
-
     for _pid, _cids in _parent_clients.items():
-        _cid_positions = [(c, p) for c in _cids if (p := _resolved_pos(c)) is not None]
+        _cid_positions = [(c, position[c]) for c in _cids if c in position]
         if not _cid_positions:
             continue
         _xs = [p[0] for _, p in _cid_positions]
