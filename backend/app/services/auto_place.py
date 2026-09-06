@@ -503,6 +503,10 @@ async def run_auto_place(
         dev.id for dev in all_devices if _dev_in_types(dev, {"switch"})
     }
     for vm_id, host_id in virt_host_of.items():
+        # If the host IS a switch (hub directly under a switch), skip bleed-through
+        # cleanup — the vm↔switch edge is intentional, not an LLDP artifact.
+        if host_id in _switch_ids_for_mac:
+            continue
         for sw_id in list(adjacency.get(vm_id, set())):
             if sw_id not in _switch_ids_for_mac:
                 continue
