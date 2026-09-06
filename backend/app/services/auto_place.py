@@ -40,7 +40,7 @@ _INFRA_TYPES = {"router", "gateway", "firewall", "switch", "ap"}
 
 # Hypervisors sit between the switch tier and the client band; their VMs are
 # their "clients".  Not in _INFRA_TYPES so SNMP walks skip them.
-_VIRTUAL_INFRA_TYPES = {"xcpng", "proxmox", "docker_host"}
+_VIRTUAL_INFRA_TYPES = {"xcpng", "proxmox", "docker_host", "hub"}
 
 # InventoryDeviceLink discovery_source values that encode hypervisor→VM edges
 _VIRTUAL_LINK_SOURCES = {"xcpng_virtual", "proxmox_virtual", "manual"}
