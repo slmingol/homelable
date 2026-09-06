@@ -718,25 +718,32 @@ async def run_auto_place(
         if pid in _layout_virtual_infra:
             _virt_client_groups.setdefault(pid, []).append(cid)
 
+    # Group sibling hubs by parent so they can be spread horizontally.
+    _hubs_by_parent: dict[str, list[str]] = {}
     for hub_id in _layout_virtual_infra:
         parent_id = infra_bfs_parent.get(hub_id)
-        if parent_id not in position:
-            continue
+        if parent_id in position:
+            _hubs_by_parent.setdefault(parent_id, []).append(hub_id)
+
+    for parent_id, hub_ids in _hubs_by_parent.items():
         parent_x, parent_y = position[parent_id]
-        hub_x = parent_x + INFRA_NODE_WIDTH
-        hub_y = parent_y + INFRA_TIER_HEIGHT
-        position[hub_id] = (hub_x, hub_y)
-        # reposition this hub's client group directly below it
-        cids = sorted(_virt_client_groups.get(hub_id, []), key=lambda d: _dev_label.get(d, d).lower())
-        if cids:
-            cols, _ = _client_grid_shape(len(cids))
-            left = hub_x + INFRA_NODE_WIDTH / 2 - (cols * CLIENT_NODE_WIDTH) / 2
-            group_y = hub_y + INFRA_TIER_HEIGHT
-            for i, cid in enumerate(cids):
-                position[cid] = (
-                    left + (i % cols) * CLIENT_NODE_WIDTH,
-                    group_y + (i // cols) * CLIENT_NODE_HEIGHT,
-                )
+        # Sort siblings alphabetically for stable ordering.
+        hub_ids_sorted = sorted(hub_ids, key=lambda h: _dev_label.get(h, h).lower())
+        for idx, hub_id in enumerate(hub_ids_sorted):
+            hub_x = parent_x + INFRA_NODE_WIDTH * (idx + 1)
+            hub_y = parent_y + INFRA_TIER_HEIGHT
+            position[hub_id] = (hub_x, hub_y)
+            # reposition this hub's client group directly below it
+            cids = sorted(_virt_client_groups.get(hub_id, []), key=lambda d: _dev_label.get(d, d).lower())
+            if cids:
+                cols, _ = _client_grid_shape(len(cids))
+                left = hub_x + INFRA_NODE_WIDTH / 2 - (cols * CLIENT_NODE_WIDTH) / 2
+                group_y = hub_y + INFRA_TIER_HEIGHT
+                for i, cid in enumerate(cids):
+                    position[cid] = (
+                        left + (i % cols) * CLIENT_NODE_WIDTH,
+                        group_y + (i // cols) * CLIENT_NODE_HEIGHT,
+                    )
 
     # --- 6. Create / reposition Node rows ----------------------------------
     nodes_placed = 0
