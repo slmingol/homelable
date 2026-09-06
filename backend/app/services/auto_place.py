@@ -765,6 +765,10 @@ async def run_auto_place(
                 node = existing_node_obj[dev.id]
                 node.pos_x = x
                 node.pos_y = y
+                # Sync node type from inventory so hub/ap/camera etc. stay current.
+                inv_type = dev.type or dev.suggested_type or "device"
+                if node.type != inv_type:
+                    node.type = inv_type
                 # Reset handle counts to default; edge creation will not re-expand them.
                 node.bottom_handles = 1
                 node.top_handles = 1
