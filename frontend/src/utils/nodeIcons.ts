@@ -179,6 +179,7 @@ export const NODE_TYPE_DEFAULT_ICONS: Record<NodeType, LucideIcon> = {
   cpl:              PlugZap,
   docker_host:      Anchor,
   docker_container: Package,
+  hub:              Home,
   zigbee_coordinator: Radio,
   zigbee_router:      Zap,
   zigbee_enddevice:   Lightbulb,
