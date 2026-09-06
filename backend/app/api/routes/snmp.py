@@ -3,10 +3,18 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.core.config import settings
+from app.core.scheduler import (
+    reschedule_lldp_discovery,
+    reschedule_snmp_poll,
+    set_lldp_discovery_enabled,
+    set_snmp_poll_enabled,
+)
 from app.db.database import get_db
 from app.db.models import Edge, InventoryDevice, Node, SnmpMetric
 from app.schemas.snmp import LldpNeighbor, SnmpMetricOut, TopologyDiscoveryResult
@@ -14,6 +22,44 @@ from app.services.snmp import poll_device
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class SnmpConfig(BaseModel):
+    snmp_poll_enabled: bool = False
+    snmp_poll_interval: int = Field(default=300, ge=60)
+    lldp_discovery_enabled: bool = False
+    lldp_discovery_interval: int = Field(default=3600, ge=300)
+
+
+@router.get("/config", response_model=SnmpConfig)
+async def get_snmp_config(_: str = Depends(get_current_user)) -> SnmpConfig:
+    return SnmpConfig(
+        snmp_poll_enabled=settings.snmp_poll_enabled,
+        snmp_poll_interval=settings.snmp_poll_interval,
+        lldp_discovery_enabled=settings.lldp_discovery_enabled,
+        lldp_discovery_interval=settings.lldp_discovery_interval,
+    )
+
+
+@router.post("/config", response_model=SnmpConfig)
+async def update_snmp_config(
+    payload: SnmpConfig, _: str = Depends(get_current_user)
+) -> SnmpConfig:
+    try:
+        settings.snmp_poll_enabled = payload.snmp_poll_enabled
+        settings.snmp_poll_interval = payload.snmp_poll_interval
+        settings.lldp_discovery_enabled = payload.lldp_discovery_enabled
+        settings.lldp_discovery_interval = payload.lldp_discovery_interval
+        settings.save_overrides()
+        set_snmp_poll_enabled(payload.snmp_poll_enabled)
+        if payload.snmp_poll_enabled:
+            reschedule_snmp_poll(payload.snmp_poll_interval)
+        set_lldp_discovery_enabled(payload.lldp_discovery_enabled)
+        if payload.lldp_discovery_enabled:
+            reschedule_lldp_discovery(payload.lldp_discovery_interval)
+        return payload
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 def _norm_mac(mac: str) -> str:
