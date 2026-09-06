@@ -43,7 +43,7 @@ _INFRA_TYPES = {"router", "gateway", "firewall", "switch", "ap"}
 _VIRTUAL_INFRA_TYPES = {"xcpng", "proxmox", "docker_host"}
 
 # InventoryDeviceLink discovery_source values that encode hypervisor→VM edges
-_VIRTUAL_LINK_SOURCES = {"xcpng_virtual", "proxmox_virtual"}
+_VIRTUAL_LINK_SOURCES = {"xcpng_virtual", "proxmox_virtual", "manual"}
 
 
 def _dev_in_types(dev: "InventoryDevice", types: set[str]) -> bool:
