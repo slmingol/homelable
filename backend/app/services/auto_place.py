@@ -705,6 +705,35 @@ async def run_auto_place(
         virtual_infra_ids=_layout_virtual_infra,
     )
 
+    # Post-process: snap virtual infra hubs (HomeBase, hypervisors) to sit
+    # just to the right of their BFS parent node instead of the distant
+    # Reingold-Tilford position caused by sibling-count spreading.
+    # Also reposition their client groups (cameras, VMs) directly below them.
+    _virt_client_groups: dict[str, list[str]] = {}
+    for cid, pid in client_parent.items():
+        if pid in _layout_virtual_infra:
+            _virt_client_groups.setdefault(pid, []).append(cid)
+
+    for hub_id in _layout_virtual_infra:
+        parent_id = infra_bfs_parent.get(hub_id)
+        if parent_id not in position:
+            continue
+        parent_x, parent_y = position[parent_id]
+        hub_x = parent_x + INFRA_NODE_WIDTH
+        hub_y = parent_y + INFRA_TIER_HEIGHT
+        position[hub_id] = (hub_x, hub_y)
+        # reposition this hub's client group directly below it
+        cids = sorted(_virt_client_groups.get(hub_id, []), key=lambda d: _dev_label.get(d, d).lower())
+        if cids:
+            cols, _ = _client_grid_shape(len(cids))
+            left = hub_x + INFRA_NODE_WIDTH / 2 - (cols * CLIENT_NODE_WIDTH) / 2
+            group_y = hub_y + INFRA_TIER_HEIGHT
+            for i, cid in enumerate(cids):
+                position[cid] = (
+                    left + (i % cols) * CLIENT_NODE_WIDTH,
+                    group_y + (i // cols) * CLIENT_NODE_HEIGHT,
+                )
+
     # --- 6. Create / reposition Node rows ----------------------------------
     nodes_placed = 0
     nodes_moved = 0
