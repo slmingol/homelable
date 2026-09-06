@@ -77,6 +77,7 @@ def _compute_tree_layout(
     infra_adj: dict[str, set[str]],
     client_parent: dict[str, str | None],
     label_of: dict[str, str],
+    virtual_infra_ids: set[str] | None = None,
 ) -> tuple[dict[str, tuple[float, float]], float]:
     """Tidy-tree (Reingold-Tilford style) layout for infra + grouped clients.
 
@@ -134,9 +135,17 @@ def _compute_tree_layout(
     if _ORPHAN_KEY in groups:
         hubs.append(_leaf(_ORPHAN_KEY))
 
+    _virtual_infra = virtual_infra_ids or set()
+
     def _leaf_width(node: str) -> float:
         if node.startswith(_CLIENT_LEAF):
-            cols, _ = _client_grid_shape(len(groups[node[len(_CLIENT_LEAF):]]))
+            key = node[len(_CLIENT_LEAF):]
+            # Virtual infra hubs (hypervisors, IoT hubs) are leaf infra nodes;
+            # their client group should not widen the infra tree — it will be
+            # placed directly below the hub after tree layout.
+            if key in _virtual_infra:
+                return INFRA_NODE_WIDTH
+            cols, _ = _client_grid_shape(len(groups[key]))
             return cols * CLIENT_NODE_WIDTH + CLIENT_GROUP_GAP
         return INFRA_NODE_WIDTH
 
@@ -201,13 +210,22 @@ def _compute_tree_layout(
     band_bottom = client_y0
     for key, cids in groups.items():
         cols, rows = _client_grid_shape(len(cids))
-        left = cx[_leaf(key)] - (cols * CLIENT_NODE_WIDTH) / 2
+        # Virtual infra hubs position their client group directly below the hub
+        # node (using the hub's own cx), not the wide virtual leaf cx.
+        if key in _virtual_infra and key in cx:
+            hub_y = infra_tier_map.get(key, max_tier) * INFRA_TIER_HEIGHT
+            group_y0 = hub_y + INFRA_TIER_HEIGHT
+            centre_x = cx[key]
+        else:
+            group_y0 = client_y0
+            centre_x = cx[_leaf(key)] if _leaf(key) in cx else cx.get(key, 0.0)
+        left = centre_x - (cols * CLIENT_NODE_WIDTH) / 2
         for i, cid in enumerate(cids):
             position[cid] = (
                 left + (i % cols) * CLIENT_NODE_WIDTH,
-                client_y0 + (i // cols) * CLIENT_NODE_HEIGHT,
+                group_y0 + (i // cols) * CLIENT_NODE_HEIGHT,
             )
-        band_bottom = max(band_bottom, client_y0 + rows * CLIENT_NODE_HEIGHT)
+        band_bottom = max(band_bottom, group_y0 + rows * CLIENT_NODE_HEIGHT)
 
     return position, band_bottom
 
@@ -673,6 +691,10 @@ async def run_auto_place(
             )
 
     # Phase 1 + 2: tidy-tree layout of infra with per-parent client groups.
+    _layout_virtual_infra = {
+        d.id for d in devices
+        if _dev_in_types(d, _VIRTUAL_INFRA_TYPES) and d.id in layout_infra_ids
+    }
     position, fallback_y = _compute_tree_layout(
         layout_infra_ids,
         infra_tier_map,
@@ -680,6 +702,7 @@ async def run_auto_place(
         infra_adj,
         client_parent,
         _dev_label,
+        virtual_infra_ids=_layout_virtual_infra,
     )
 
     # --- 6. Create / reposition Node rows ----------------------------------
