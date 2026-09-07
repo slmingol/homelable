@@ -398,11 +398,30 @@ async def _build_topology(
                     confirmed_infra_ids.add(dev_id)
 
 
-            # STP priorities: translate MAC keys to device IDs
+            # STP priorities: translate MAC keys to device IDs.
+            # The STP root bridge (priority 0) is the TOR/core switch — it sits
+            # directly above the firewall but pfSense/OPNsense won't appear in
+            # UniFi device_uplinks.  Wire it to every BFS root so BFS places it
+            # at t1 alongside other core switches.
+            stp_root_ids: list[str] = []
             for stp_mac, stp_prio in topo.get("stp_priorities", {}).items():
                 dev_id = mac_to_dev.get(stp_mac)
                 if dev_id:
                     stp_by_dev[dev_id] = stp_prio
+                    if stp_prio == 0:
+                        stp_root_ids.append(dev_id)
+
+            if stp_root_ids:
+                root_ids = [mac_to_dev[m] for m in root_macs if m in mac_to_dev]
+                for root_id in root_ids:
+                    for stp_root in stp_root_ids:
+                        if stp_root not in core_switches:
+                            _add_edge(root_id, stp_root)
+                logger.info(
+                    "auto_place: STP root bridge(s) wired to BFS roots: %s → %s",
+                    [dev_label.get(s, s) for s in stp_root_ids],
+                    [dev_label.get(r, r) for r in root_ids],
+                )
 
         except Exception as exc:
             logger.warning("auto_place: UniFi topology fetch failed: %s", exc)
