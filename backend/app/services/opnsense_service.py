@@ -147,6 +147,35 @@ async def _fetch_arp(
         return []
 
 
+async def fetch_dhcp_hostname_macs(
+    base_url: str,
+    api_key: str,
+    api_secret: str,
+    verify_tls: bool = False,
+) -> dict[str, str]:
+    """Return {lease_mac → hostname} for all active DHCP leases.
+
+    Used by auto_place to resolve randomized WiFi MACs (which UniFi sees) back
+    to a known hostname so they can be matched to inventory entries.
+    """
+    base = base_url.rstrip("/")
+    headers = _auth_header(api_key, api_secret)
+    try:
+        async with httpx.AsyncClient(verify=verify_tls, timeout=10.0) as client:
+            leases = await _fetch_dhcp_leases(client, base, headers)
+    except Exception as exc:
+        logger.warning("OPNsense DHCP hostname fetch failed: %s", exc)
+        return {}
+    out: dict[str, str] = {}
+    for lease in leases:
+        mac = (lease.get("mac") or "").lower().strip()
+        hostname = (lease.get("hostname") or lease.get("descr") or "").strip()
+        if mac and hostname:
+            out[mac] = hostname
+    logger.info("OPNsense: %d DHCP hostname→MAC aliases fetched", len(out))
+    return out
+
+
 async def _fetch_dhcp_leases(
     client: httpx.AsyncClient,
     base: str,
