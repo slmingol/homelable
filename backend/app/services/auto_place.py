@@ -687,12 +687,21 @@ async def run_auto_place(
         if dev_id in approved_set and dev_id not in infra_tier_map:
             infra_tier_map[dev_id] = max_infra_tier + 1
 
+    # STP-priority tier override for switches: STP bridge priority directly
+    # encodes the switch hierarchy (0=TOR/core, 4096=distribution, 8192=access,
+    # …) in multiples of 4096.  Convert to tier: priority//4096 + 1 so the
+    # STP root sits at t1 regardless of BFS hop count.  Only override switch-
+    # typed devices that have STP data; APs and virtual infra are unaffected.
+    _sw_ids = {d.id for d in devices if d.id in infra_ids and _dev_in_types(d, {"switch"})}
+    for dev_id in _sw_ids:
+        if dev_id in stp_by_dev and dev_id in infra_tier_map:
+            infra_tier_map[dev_id] = stp_by_dev[dev_id] // 4096 + 1
+
     # Type-stratified tier adjustment: enforce the visual hierarchy
     #   t0 : firewalls / routers / gateways  (BFS roots, already at 0)
-    #   t1..n : switches, ordered by BFS depth through infra_adj
+    #   t1..n : switches, ordered by STP priority (or BFS depth if no STP)
     #   t(n+1): APs, all at the same tier regardless of which switch they face
     #   (client area below)
-    _sw_ids = {d.id for d in devices if d.id in infra_ids and _dev_in_types(d, {"switch"})}
     _ap_ids = {d.id for d in devices if d.id in infra_ids and _dev_in_types(d, {"ap"})}
 
     # Move all APs to one tier beyond the deepest switch; FWs stay at t0 (BFS root).
