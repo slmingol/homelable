@@ -160,6 +160,89 @@ async def _fetch_arp(
     return []
 
 
+async def fetch_dhcp_hostname_macs(
+    base_url: str,
+    api_key: str,
+    verify_tls: bool = False,
+) -> dict[str, str]:
+    """Return {lease_mac → hostname} for all active DHCP leases (dynamic + static).
+
+    Tries the REST leases endpoint first; falls back to parsing the raw
+    dhcpd.leases file via the command_prompt API so randomized-MAC devices
+    (dynamic leases) are included alongside static mappings.
+    """
+    base = base_url.rstrip("/")
+    headers = _auth_headers(api_key)
+    out: dict[str, str] = {}
+
+    async with httpx.AsyncClient(verify=verify_tls, timeout=15.0) as client:
+        # 1. Try REST leases endpoint (pfSense-pkg-RESTAPI >= 2.x)
+        try:
+            r = await client.get(
+                f"{base}/api/v2/services/dhcp_server/leases",
+                headers=headers,
+                params={"limit": 0},
+            )
+            if r.status_code == 200:
+                for lease in (r.json().get("data") or []):
+                    mac = _norm_mac(lease.get("mac") or lease.get("hw-mac") or "")
+                    hostname = (lease.get("hostname") or lease.get("client-hostname") or "").strip()
+                    if mac and hostname:
+                        out[mac] = hostname
+                logger.info("pfSense: %d dynamic lease aliases from REST endpoint", len(out))
+                # Also pull static mappings
+                for m in await _fetch_dhcp_static(client, base, headers):
+                    mac = _norm_mac(m.get("mac") or "")
+                    hostname = (m.get("hostname") or m.get("descr") or "").strip()
+                    if mac and hostname and mac not in out:
+                        out[mac] = hostname
+                return out
+        except Exception:
+            pass
+
+        # 2. Fall back: parse /var/dhcpd/var/db/dhcpd.leases via command_prompt
+        try:
+            r = await client.post(
+                f"{base}/api/v2/diagnostics/command_prompt",
+                headers=headers,
+                json={"command": "cat /var/dhcpd/var/db/dhcpd.leases 2>/dev/null"},
+            )
+            if r.status_code == 200:
+                raw = (r.json().get("data") or {}).get("output", "")
+                out.update(_parse_dhcpd_leases(raw))
+                logger.info("pfSense: %d lease aliases from dhcpd.leases file", len(out))
+        except Exception as exc:
+            logger.warning("pfSense DHCP lease fetch failed: %s", exc)
+
+        # Always include static mappings
+        for m in await _fetch_dhcp_static(client, base, headers):
+            mac = _norm_mac(m.get("mac") or "")
+            hostname = (m.get("hostname") or m.get("descr") or "").strip()
+            if mac and hostname and mac not in out:
+                out[mac] = hostname
+
+    return out
+
+
+def _parse_dhcpd_leases(raw: str) -> dict[str, str]:
+    """Parse ISC dhcpd lease file → {mac: hostname} for active/free leases."""
+    out: dict[str, str] = {}
+    mac = hostname = ""
+    for line in raw.splitlines():
+        line = line.strip()
+        if line.startswith("lease "):
+            mac = hostname = ""
+        elif line.startswith("hardware ethernet"):
+            mac = _norm_mac(line.split()[-1].rstrip(";"))
+        elif line.startswith("client-hostname"):
+            hostname = line.split(None, 1)[-1].strip().strip('";')
+        elif line == "}":
+            if mac and hostname:
+                out[mac] = hostname
+            mac = hostname = ""
+    return out
+
+
 async def _fetch_dhcp_static(
     client: httpx.AsyncClient,
     base: str,
