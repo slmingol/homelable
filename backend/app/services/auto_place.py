@@ -481,23 +481,20 @@ async def run_auto_place(
       skipped         — devices already on canvas (non-force mode)
     """
     # --- 1. Load devices -----------------------------------------------------
-    # Approved devices are placed on canvas; all non-hidden devices are used
-    # for MAC lookup during topology building so that pending infra devices
-    # (switches, APs) still appear as edge endpoints.
-    approved_devices: list[InventoryDevice] = (
-        await db.execute(
-            select(InventoryDevice).where(InventoryDevice.status == "approved")
-        )
-    ).scalars().all()
-
-    if not approved_devices:
-        return {"nodes_placed": 0, "nodes_moved": 0, "edges_created": 0, "skipped": 0}
-
+    # All non-hidden devices are placed on canvas and used for MAC/topology
+    # resolution.  Using status != "hidden" (rather than status == "approved")
+    # makes auto-place resilient to devices reverting to "pending" — e.g. after
+    # a scan re-import — without breaking the layout.
     all_devices: list[InventoryDevice] = (
         await db.execute(
             select(InventoryDevice).where(InventoryDevice.status != "hidden")
         )
     ).scalars().all()
+
+    approved_devices = all_devices  # placement uses same set as topology build
+
+    if not approved_devices:
+        return {"nodes_placed": 0, "nodes_moved": 0, "edges_created": 0, "skipped": 0}
 
     # --- 2. Find which devices already have a node on this design ----------
     existing_nodes: list[Node] = (
@@ -509,7 +506,6 @@ async def run_auto_place(
     }
 
     # --- 3. Build topology adjacency from UniFi + SNMP ---------------------
-    # Pass all non-hidden devices for MAC resolution; placement uses approved only.
     adjacency, stp_by_dev, confirmed_infra_ids = await _build_topology(all_devices)
 
     # Inject xcpng_virtual / proxmox_virtual host→VM edges from InventoryDeviceLink.
