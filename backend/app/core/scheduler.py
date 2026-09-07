@@ -468,7 +468,7 @@ async def _run_unifi_sync() -> None:
 async def _run_opnsense_sync() -> None:
     if not settings.opnsense_sync_enabled:
         return
-    if not (settings.opnsense_host and settings.opnsense_api_key and settings.opnsense_api_secret):
+    if not (settings.opnsense_url and settings.opnsense_api_key and settings.opnsense_api_secret):
         logger.warning("OPNsense auto-sync enabled but host/credentials not configured — skipping")
         return
     from app.api.routes.opnsense import _background_opnsense_sync
@@ -478,7 +478,7 @@ async def _run_opnsense_sync() -> None:
         run = ScanRun(
             status="running",
             kind="opnsense",
-            ranges=[f"{settings.opnsense_host}:{settings.opnsense_port}"],
+            ranges=[settings.opnsense_url],
         )
         db.add(run)
         await db.commit()
@@ -491,7 +491,7 @@ async def _run_opnsense_sync() -> None:
 async def _run_pfsense_sync() -> None:
     if not settings.pfsense_sync_enabled:
         return
-    if not (settings.pfsense_host and settings.pfsense_api_key):
+    if not (settings.pfsense_url and settings.pfsense_api_key):
         logger.warning("pfSense auto-sync enabled but host/credentials not configured — skipping")
         return
     from app.api.routes.pfsense import _background_pfsense_sync
@@ -501,7 +501,7 @@ async def _run_pfsense_sync() -> None:
         run = ScanRun(
             status="running",
             kind="pfsense",
-            ranges=[f"{settings.pfsense_host}:{settings.pfsense_port}"],
+            ranges=[settings.pfsense_url],
         )
         db.add(run)
         await db.commit()
