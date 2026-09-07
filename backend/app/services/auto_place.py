@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings as app_settings
 from app.db.models import Edge, InventoryDevice, InventoryDeviceLink, Node
 from app.services.lldp import discover_neighbors
+from app.services.opnsense_service import fetch_dhcp_hostname_macs
 from app.services.unifi_service import fetch_unifi_topology
 
 logger = logging.getLogger(__name__)
@@ -267,8 +268,30 @@ async def _build_topology(
             adjacency.setdefault(dev_a, set()).add(dev_b)
             adjacency.setdefault(dev_b, set()).add(dev_a)
 
-    # --- A. UniFi topology ---------------------------------------------------
+    # --- A0. OPNsense DHCP lease aliases ------------------------------------
+    # Devices with MAC randomization appear under a different MAC in UniFi
+    # client_uplinks than the hardware MAC stored in the inventory. DHCP leases
+    # include hostname + current MAC, so we can add the randomized MAC as an
+    # alias pointing to the same device_id before processing client_uplinks.
     s = app_settings
+    if s.opnsense_url and s.opnsense_api_key and s.opnsense_api_secret:
+        dhcp_aliases = await fetch_dhcp_hostname_macs(
+            base_url=s.opnsense_url,
+            api_key=s.opnsense_api_key,
+            api_secret=s.opnsense_api_secret,
+            verify_tls=s.opnsense_verify_tls,
+        )
+        aliases_added = 0
+        for lease_mac, hostname in dhcp_aliases.items():
+            if lease_mac not in mac_to_dev:
+                dev_id = name_to_dev.get(hostname.lower())
+                if dev_id:
+                    mac_to_dev[lease_mac] = dev_id
+                    aliases_added += 1
+        if aliases_added:
+            logger.info("auto_place: added %d DHCP MAC aliases for randomized-MAC devices", aliases_added)
+
+    # --- A. UniFi topology ---------------------------------------------------
     host = s.unifi_effective_host
     port = s.unifi_effective_port
     if host and s.unifi_username and s.unifi_password:
