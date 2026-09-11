@@ -23,11 +23,11 @@ jobs:
           git remote add upstream https://github.com/Pouzor/homelable.git
           git fetch upstream main
 
-      - name: Merge upstream into main
+      - name: Rebase fork-specific commits onto upstream/main
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git merge upstream/main --ff-only
+          git rebase upstream/main
 
       - name: Push
-        run: git push origin main
+        run: git push origin main --force-with-lease
