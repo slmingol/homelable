@@ -60,8 +60,7 @@ import { DEVICE_TYPE_GROUPS } from '@/utils/nodeTypeGroups'
 import { formatRelative, formatTimestamp } from '@/utils/timeFormat'
 import { countPorts } from '@/utils/portSpec'
 import { serviceToForm, type ServiceFormData, type ServiceSubmitData } from '@/utils/serviceForm'
-import { NODE_TYPE_LABELS, type CheckMethod, type DeviceStatus, type InventoryEntry, type NodeProperty, type NodeType, type ServiceInfo } from '@/types'
-import { NODE_TYPE_LABELS, type CheckMethod, type InventoryEntry, type LldpNeighbor, type NodeProperty, type NodeType, type ServiceInfo, type SnmpMetric } from '@/types'
+import { NODE_TYPE_LABELS, type CheckMethod, type DeviceStatus, type InventoryEntry, type LldpNeighbor, type NodeProperty, type NodeType, type ServiceInfo, type SnmpMetric } from '@/types'
 import modalStyles from './modal-interactive.module.css'
 
 // Home is `@/types` now — re-exported because most call sites import it here.
