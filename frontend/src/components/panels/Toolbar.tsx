@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { Save, LayoutDashboard, Download, Palette, Undo2, Redo2, HelpCircle, Table2, FileDown, Upload, Eye, Network } from 'lucide-react'
+import { Save, LayoutDashboard, Download, Palette, Undo2, Redo2, HelpCircle, FileDown, Upload, Eye, Network } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Logo } from '@/components/ui/Logo'
 import { useCanvasStore } from '@/stores/canvasStore'
