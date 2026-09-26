@@ -65,7 +65,7 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.context }}/${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
-          push: true
+          push: ${{ github.repository == 'Pouzor/homelable' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: ${{ matrix.build_args }}
