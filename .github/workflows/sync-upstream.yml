@@ -16,24 +16,18 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
 
       - name: Fetch upstream
         run: |
           git remote add upstream https://github.com/Pouzor/homelable.git
           git fetch upstream main
 
-      - name: Merge upstream into main
-        id: merge
+      - name: Rebase fork-specific commits onto upstream/main
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git merge upstream/main --ff-only; then
-            echo "synced=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::Fork main has diverged from upstream and cannot be fast-forwarded. Rebase or merge upstream/main into your local main, then push to resolve."
-            exit 1
-          fi
+          git rebase upstream/main
 
       - name: Push
-        run: git push origin main
+        run: git push origin main --force-with-lease
